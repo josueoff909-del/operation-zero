@@ -5,7 +5,10 @@
   <!-- viewport travado: sem zoom acidental, com notch (viewport-fit=cover) -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0b1220" />
-  <title>OPERATION ZERO — Protótipo Fase 2</title>
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>OPERATION ZERO — Battle Royale FPS</title>
   <style>
     :root {
       --hud-bg: rgba(8, 12, 20, 0.62);
@@ -13,27 +16,36 @@
       --accent: #ffb020;
       --ok: #4ade80;
       --warn: #f87171;
+      --ink: #e8eef7;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      width: 100%; height: 100%; overflow: hidden;
-      background: #0b1220; color: #e8eef7;
+      /* tela cheia de verdade: 100dvh (fallback 100vh) sem barras escuras */
+      width: 100vw; height: 100vh; height: 100dvh;
+      overflow: hidden;
+      background: #060911; color: var(--ink);
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      /* Skill §3: bloquear pull-to-refresh / zoom do navegador */
+      /* Skill §3: bloquear pull-to-refresh / zoom / seleção no Android */
       touch-action: none;
       overscroll-behavior: none;
       -webkit-user-select: none; user-select: none;
       -webkit-tap-highlight-color: transparent;
     }
-    #app { position: fixed; inset: 0; }
-    #app canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    #app { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; }
+    #app canvas {
+      display: block; width: 100%; height: 100%;
+      touch-action: none; outline: none;
+    }
+    /* sem letterbox quando o navegador entra em fullscreen */
+    html.is-fullscreen body, html.is-fullscreen #app { height: 100vh; height: 100dvh; }
 
-    /* ---------- HUD superior ---------- */
+    /* ---------- HUD superior (performance + status) ---------- */
     #hud-top {
       position: fixed; top: max(10px, env(safe-area-inset-top)); left: 10px; right: 64px;
       display: flex; gap: 8px; align-items: flex-start; pointer-events: none; z-index: 10;
-      flex-wrap: wrap;
+      flex-wrap: wrap; transition: opacity 0.25s;
     }
+    #hud-top.dim { opacity: 0.5; }
     .hud-card {
       background: var(--hud-bg); border: 1px solid var(--hud-border);
       border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(6px);
@@ -47,7 +59,56 @@
     .stat-row span:first-child { opacity: 0.7; }
     .stat-row span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
 
-    /* ---------- Mira central ---------- */
+    /* ---------- HUD de partida (vida/munição/abates) ---------- */
+    #hud-match {
+      /* overlay inteiro, mas quem recebe o toque são os botões de ação e as
+         zonas de joystick/look — este camada só desenha, nunca captura dedo */
+      position: fixed; inset: 0; z-index: 10; pointer-events: none;
+      opacity: 0; transition: opacity 0.25s;
+    }
+    #hud-match.show { opacity: 1; }
+    /* vida no TOPO central: a base da tela é só dos botões de toque
+       (regra do pedido: ATIRAR/MIRAR/PULAR/AGACHAR nunca por cima do HUD) */
+    #health-wrap {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      top: max(10px, env(safe-area-inset-top));
+      width: min(280px, 34vw);
+      background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: 999px;
+      padding: 5px 10px; display: flex; align-items: center; gap: 8px;
+    }
+    #health-bar { position: relative; flex: 1; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.14); overflow: hidden; }
+    #health-fill {
+      position: absolute; inset: 0; transform-origin: left center; transform: scaleX(1);
+      background: linear-gradient(90deg, #58e08a, #b6f36a); border-radius: 999px;
+    }
+    #health-fill.low { background: linear-gradient(90deg, #ff5d5d, #ff9a4d); }
+    #health-text { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; min-width: 26px; text-align: right; }
+    #ammo-wrap {
+      position: absolute; right: max(12px, env(safe-area-inset-right));
+      top: max(62px, calc(env(safe-area-inset-top) + 62px));
+      background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: 10px;
+      padding: 6px 10px; text-align: right; min-width: 92px;
+    }
+    #ammo-text { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    #ammo-reload {
+      margin-top: 4px; height: 3px; border-radius: 999px; background: var(--accent);
+      transform: scaleX(0); transform-origin: left center; opacity: 0;
+    }
+    #ammo-reload.on { opacity: 1; }
+    #ammo-wrap small { display: block; font-size: 9px; opacity: 0.7; letter-spacing: 0.08em; }
+    #kill-feed {
+      position: absolute; right: max(12px, env(safe-area-inset-right));
+      top: max(128px, calc(env(safe-area-inset-top) + 128px));
+      display: flex; flex-direction: column; gap: 3px; align-items: flex-end;
+      font-size: 11px;
+    }
+    .feed-line {
+      background: rgba(8,12,20,0.66); border: 1px solid var(--hud-border);
+      border-radius: 6px; padding: 3px 8px;
+    }
+    .feed-line b { color: var(--warn); }
+
+    /* ---------- Mira + hitmarker ---------- */
     #crosshair {
       position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
       width: 18px; height: 18px; pointer-events: none; z-index: 9; opacity: 0.9;
@@ -57,44 +118,39 @@
     }
     #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
     #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
-
-    /* ---------- Ajuda de controles (desktop x mobile) ---------- */
-    #help {
-      position: fixed; left: 10px; bottom: max(10px, env(safe-area-inset-bottom));
-      background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: 10px;
-      padding: 8px 12px; font-size: 11px; line-height: 1.6; pointer-events: none; z-index: 10;
-      max-width: 46vw;
+    #hitmarker {
+      position: fixed; left: 50%; top: 50%; width: 26px; height: 26px;
+      transform: translate(-50%, -50%) rotate(45deg); opacity: 0;
+      pointer-events: none; z-index: 12;
     }
-    #help b { color: var(--accent); }
-    #help-mobile { display: none; }
-    /* Mobile: nunca mostra ajuda de mouse/teclado. */
-    @media (pointer: coarse) {
-      #help-desktop { display: none; }
-      #help-mobile { display: block; }
-      /* Dica de clique p/ travar o mouse: só existe no desktop. */
-      #lock-hint { display: none !important; }
+    #hitmarker::before, #hitmarker::after {
+      content: ""; position: absolute; background: #fff; box-shadow: 0 0 6px rgba(0,0,0,0.8);
     }
+    #hitmarker::before { left: 0; top: 0; width: 100%; height: 2px; }
+    #hitmarker::after { left: 0; top: 0; width: 2px; height: 100%; }
+    #hitmarker.on { animation: hitpop 0.16s ease-out; opacity: 1; }
+    #hitmarker.kill::before, #hitmarker.kill::after { background: var(--warn); }
+    #hitmarker.head::before, #hitmarker.head::after { background: var(--accent); }
+    @keyframes hitpop { from { transform: translate(-50%,-50%) rotate(45deg) scale(1.5); } to { transform: translate(-50%,-50%) rotate(45deg) scale(1); } }
+    #damage-vignette {
+      position: fixed; inset: 0; z-index: 8; pointer-events: none; opacity: 0;
+      background: radial-gradient(ellipse at center, rgba(255,0,0,0) 42%, rgba(190,20,20,0.62) 100%);
+      transition: opacity 0.22s ease-out;
+    }
+    #damage-vignette.on { opacity: 1; transition: opacity 0.04s; }
 
     /* ---------- Joystick virtual flutuante (Skill §3) ---------- */
-    #joystick-zone {
-      position: fixed; left: 0; bottom: 0; width: 50%; height: 100%;
-      z-index: 5; touch-action: none;
-    }
+    #joystick-zone { position: fixed; left: 0; bottom: 0; width: 50%; height: 100%; z-index: 5; touch-action: none; }
     #joystick-base {
       position: fixed; width: 120px; height: 120px; border-radius: 50%;
       border: 2px solid rgba(255,255,255,0.35); background: rgba(255,255,255,0.08);
-      display: none; transform: translate(-50%, -50%); pointer-events: none;
-      z-index: 6;
+      display: none; transform: translate(-50%, -50%); pointer-events: none; z-index: 6;
     }
     #joystick-nub {
       position: absolute; width: 52px; height: 52px; border-radius: 50%;
-      background: rgba(255,255,255,0.55); left: 50%; top: 50%;
-      transform: translate(-50%, -50%);
+      background: rgba(255,255,255,0.55); left: 50%; top: 50%; transform: translate(-50%, -50%);
     }
-    #look-zone {
-      position: fixed; right: 0; bottom: 0; width: 50%; height: 100%;
-      z-index: 4; touch-action: none;
-    }
+    #look-zone { position: fixed; right: 0; bottom: 0; width: 50%; height: 100%; z-index: 4; touch-action: none; }
 
     /* ---------- Botões de ação (mobile, paisagem) ---------- */
     .action-btn {
@@ -104,39 +160,28 @@
       display: flex; align-items: center; justify-content: center; touch-action: none;
     }
     .action-btn:active, .action-btn.active { background: rgba(255,176,32,0.55); }
-    #btn-fire {
-      width: 76px; height: 76px; font-size: 13px;
-      right: max(16px, env(safe-area-inset-right));
-      bottom: max(20px, env(safe-area-inset-bottom));
-    }
-    #btn-aim {
-      right: max(24px, env(safe-area-inset-right));
-      bottom: max(112px, calc(env(safe-area-inset-bottom) + 112px));
-    }
-    #btn-jump {
-      right: max(108px, calc(env(safe-area-inset-right) + 92px));
-      bottom: max(20px, env(safe-area-inset-bottom));
-    }
-    #btn-crouch {
-      right: max(108px, calc(env(safe-area-inset-right) + 92px));
-      bottom: max(96px, calc(env(safe-area-inset-bottom) + 96px));
-    }
-    #btn-sprint {
-      right: max(184px, calc(env(safe-area-inset-right) + 168px));
-      bottom: max(20px, env(safe-area-inset-bottom));
-    }
+    /* grade do polegar direito (paisagem): 3 colunas x 2 linhas, sem sobrepor.
+       ATIRAR é maior e fica na base; MIRAR acima dele; PULAR/AGACHAR na
+       coluna do meio; CORRER na coluna interna — nada em cima do HUD. */
+    #btn-fire { width: 84px; height: 84px; font-size: 13px; right: max(14px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); }
+    #btn-aim { right: max(24px, env(safe-area-inset-right)); bottom: max(112px, calc(env(safe-area-inset-bottom) + 112px)); }
+    #btn-jump { right: max(116px, calc(env(safe-area-inset-right) + 102px)); bottom: max(16px, env(safe-area-inset-bottom)); }
+    #btn-crouch { right: max(116px, calc(env(safe-area-inset-right) + 102px)); bottom: max(96px, calc(env(safe-area-inset-bottom) + 96px)); }
+    #btn-sprint { right: max(186px, calc(env(safe-area-inset-right) + 172px)); bottom: max(96px, calc(env(safe-area-inset-bottom) + 96px)); }
+    /* no Lobby/resultado, controles de partida somem (nada de botão morto) */
+    body[data-phase="lobby"] .action-btn, body[data-phase="result"] .action-btn,
+    body[data-phase="lobby"] #crosshair, body[data-phase="result"] #crosshair { display: none; }
 
     /* ---------- Engrenagem + painel de sensibilidade ---------- */
     #btn-settings {
       position: fixed; z-index: 20; width: 44px; height: 44px; border-radius: 50%;
       top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right));
       border: 1px solid var(--hud-border); background: var(--hud-bg); color: #fff;
-      font-size: 20px; display: flex; align-items: center; justify-content: center;
-      touch-action: none;
+      font-size: 20px; display: flex; align-items: center; justify-content: center; touch-action: none;
     }
     #settings-panel {
-      position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95);
-      width: min(320px, 88vw); background: var(--hud-bg); border: 1px solid var(--hud-border);
+      position: fixed; z-index: 30; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95);
+      width: min(320px, 88vw); background: rgba(8,12,20,0.92); border: 1px solid var(--hud-border);
       border-radius: 14px; padding: 18px; backdrop-filter: blur(10px);
       opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
     }
@@ -145,55 +190,126 @@
     #settings-panel label { display: block; font-size: 12px; margin: 12px 0 6px; }
     #settings-panel label span { float: right; font-weight: 700; }
     #settings-panel input[type="range"] { width: 100%; touch-action: none; }
-    #sens-reset {
+    .ghost-btn {
       margin-top: 16px; width: 100%; padding: 10px; border-radius: 8px;
       border: 1px solid var(--hud-border); background: rgba(255,176,32,0.25);
-      color: #fff; font-weight: 700; font-size: 12px; touch-action: none;
+      color: #fff; font-weight: 700; font-size: 12px; touch-action: none; cursor: pointer;
     }
 
-    /* ---------- Dica de paisagem (só celular em retrato) ---------- */
+    /* ---------- LOBBY (sobre a cena 3D) ---------- */
+    #lobby {
+      position: fixed; inset: 0; z-index: 25; display: none;
+      align-items: center; justify-content: space-between; gap: 18px;
+      padding: max(18px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+               max(18px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+      background: linear-gradient(105deg, rgba(4,8,16,0.9) 0%, rgba(4,8,16,0.55) 46%, rgba(4,8,16,0.18) 100%);
+      pointer-events: auto;
+    }
+    #lobby.show { display: flex; }
+    #lobby-brand { max-width: 46vw; }
+    #lobby-brand .kicker { font-size: 11px; letter-spacing: 0.28em; color: var(--accent); opacity: 0.9; }
+    #lobby-brand h1 {
+      font-size: clamp(26px, 6.4vw, 54px); letter-spacing: 0.06em; line-height: 1;
+      text-shadow: 0 4px 24px rgba(0,0,0,0.7);
+    }
+    #lobby-brand h1 span { color: var(--accent); }
+    #lobby-brand p { font-size: 12px; opacity: 0.82; margin-top: 8px; line-height: 1.5; max-width: 34ch; }
+    #lobby-status { margin-top: 10px; font-size: 11px; letter-spacing: 0.12em; color: var(--ok); }
+    #lobby-info { margin-top: 4px; font-size: 11px; opacity: 0.75; letter-spacing: 0.06em; }
+    #lobby-panel {
+      background: rgba(6,10,18,0.72); border: 1px solid var(--hud-border); border-radius: 16px;
+      padding: 16px; backdrop-filter: blur(10px); width: min(330px, 46vw);
+    }
+    .lobby-row { margin-bottom: 12px; }
+    .lobby-row > .label { font-size: 10px; letter-spacing: 0.16em; opacity: 0.7; margin-bottom: 6px; }
+    .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+    .seg button {
+      flex: 1 1 auto; min-width: 52px; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+      border: 1px solid var(--hud-border); background: rgba(255,255,255,0.06); color: var(--ink);
+      font-size: 11px; font-weight: 700; letter-spacing: 0.05em; touch-action: none;
+    }
+    .seg button.on { background: rgba(255,176,32,0.3); border-color: var(--accent); color: #fff; }
+    #lobby-play {
+      width: 100%; padding: 18px; margin-top: 6px; border-radius: 12px; cursor: pointer;
+      border: none; background: linear-gradient(180deg, #ffc247, #f08c12);
+      color: #23150a; font-size: 20px; font-weight: 900; letter-spacing: 0.14em;
+      box-shadow: 0 10px 30px rgba(255,150,20,0.28); touch-action: none;
+    }
+    #lobby-play:active { transform: scale(0.985); }
+    #lobby-foot { font-size: 10px; opacity: 0.6; margin-top: 10px; line-height: 1.6; }
+
+    /* ---------- Tela de resultado ---------- */
+    #result {
+      position: fixed; inset: 0; z-index: 26; display: none;
+      align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(4,8,16,0.55), rgba(4,8,16,0.92));
+    }
+    #result.show { display: flex; }
+    #result .box {
+      background: rgba(6,10,18,0.9); border: 1px solid var(--hud-border); border-radius: 16px;
+      padding: 22px 26px; width: min(360px, 90vw); text-align: center;
+    }
+    #result-title { font-size: 30px; font-weight: 900; letter-spacing: 0.08em; color: var(--warn); }
+    #result-title.win { color: var(--accent); }
+    #result-sub { font-size: 12px; opacity: 0.8; margin: 6px 0 16px; letter-spacing: 0.08em; }
+    #result-stats { text-align: left; font-size: 12px; margin-bottom: 8px; }
+
+    /* ---------- Dicas ---------- */
     #rotate-hint {
       position: fixed; left: 50%; top: max(64px, calc(env(safe-area-inset-top) + 64px));
-      transform: translateX(-50%); z-index: 15; pointer-events: none;
+      transform: translateX(-50%); z-index: 28; pointer-events: none;
       background: rgba(255,176,32,0.9); color: #1a1206; border-radius: 999px;
-      padding: 8px 16px; font-size: 12px; font-weight: 700; display: none;
-      white-space: nowrap;
+      padding: 8px 16px; font-size: 12px; font-weight: 700; display: none; white-space: nowrap;
     }
-    @media (pointer: coarse) and (orientation: portrait) {
-      #rotate-hint { display: block; }
-    }
-
-    /* ---------- Overlay de clique p/ travar mouse (desktop) ---------- */
+    @media (pointer: coarse) and (orientation: portrait) { #rotate-hint { display: block; } }
     #lock-hint {
       position: fixed; left: 50%; top: 58%; transform: translateX(-50%);
       background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: 999px;
-      padding: 8px 18px; font-size: 13px; z-index: 12; pointer-events: none;
-      transition: opacity 0.3s;
+      padding: 8px 18px; font-size: 13px; z-index: 13; pointer-events: none; transition: opacity 0.3s;
     }
     #lock-hint.hidden { opacity: 0; }
+    #help {
+      position: fixed; left: 10px; bottom: max(10px, env(safe-area-inset-bottom));
+      background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: 10px;
+      padding: 8px 12px; font-size: 11px; line-height: 1.6; pointer-events: none; z-index: 10; max-width: 46vw;
+    }
+    #help b { color: var(--accent); }
+    #help-mobile { display: none; }
+    @media (pointer: coarse) {
+      #help-desktop { display: none; }
+      #help-mobile { display: block; }
+      #lock-hint { display: none !important; }
+    }
+    /* help só na partida (no lobby o próprio menu explica) */
+    body[data-phase="lobby"] #help, body[data-phase="result"] #help { display: none; }
 
-    /* ---------- Paisagem: HUD compacto p/ telas baixas ---------- */
     @media (orientation: landscape) {
       .hud-card { padding: 6px 10px; font-size: 11px; min-width: 130px; }
       #fps-value { font-size: 18px; }
       #help { display: none; }
       #rotate-hint { display: none !important; }
+      #lobby-brand p { display: none; }
+    }
+    @media (orientation: portrait) {
+      #lobby { flex-direction: column; justify-content: flex-end; }
+      #lobby-panel { width: min(360px, 92vw); }
+      #lobby-brand { max-width: 92vw; }
     }
 
     #fatal {
       position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
-      background: #0b1220; z-index: 50; text-align: center; padding: 24px; font-size: 14px; line-height: 1.6;
+      background: #0b1220; z-index: 60; text-align: center; padding: 24px; font-size: 14px; line-height: 1.6;
     }
   </style>
 </head>
-<body>
+<body data-phase="lobby">
   <div id="app"></div>
 
-  <!-- HUD: performance / FPS (Fase 1) + estado do jogador (Fase 2) -->
+  <!-- HUD: performance (Fase 1) + estado (Fase 2) -->
   <div id="hud-top">
     <div class="hud-card">
-      <h1>OPERATION ZERO</h1>
-      <div class="sub">FASE 2 · FPS + CIDADE · WEBGL 2</div>
+      <h1>OPERATION <span style="color:#fff">ZERO</span></h1>
+      <div class="sub">BATTLE ROYALE · WEBGL 2 · LOBBY + BOTS</div>
     </div>
     <div class="hud-card">
       <div id="fps-value">-- FPS</div>
@@ -204,16 +320,37 @@
       <div class="stat-row"><span>posição</span><span id="stat-pos">--</span></div>
       <div class="stat-row"><span>estado</span><span id="stat-state">EM PÉ</span></div>
     </div>
+    <div class="hud-card" id="match-card">
+      <div class="stat-row"><span>vivos</span><span id="stat-alive">--</span></div>
+      <div class="stat-row"><span>abates</span><span id="stat-kills">0</span></div>
+      <div class="stat-row"><span>tempo</span><span id="stat-time">0:00</span></div>
+    </div>
   </div>
 
   <div id="crosshair"></div>
+  <div id="hitmarker"></div>
+  <div id="damage-vignette"></div>
+
+  <!-- HUD da partida: vida, munição, kill feed -->
+  <div id="hud-match">
+    <div id="health-wrap">
+      <div id="health-bar"><div id="health-fill"></div></div>
+      <div id="health-text">100</div>
+    </div>
+    <div id="ammo-wrap">
+      <div id="ammo-text">30/30 · 120</div>
+      <small id="ammo-weapon">AR · FUZIL</small>
+      <div id="ammo-reload"></div>
+    </div>
+    <div id="kill-feed"></div>
+  </div>
 
   <div id="help">
     <div id="help-desktop">
-      <b>Desktop:</b> WASD mover · Mouse olhar (clique p/ travar) · Botão esq. atirar · Botão dir. mirar (ADS) · Shift correr · C agachar · Espaço pular
+      <b>Desktop:</b> WASD mover · Mouse olhar (clique p/ travar) · Botão esq. atirar · Botão dir. mirar · Shift correr · C agachar · Espaço pular · R recarregar
     </div>
     <div id="help-mobile">
-      <b>Android (paisagem):</b> joystick esquerdo mover · arrastar direita olhar · ATIRAR segurar · MIRAR segurar (ADS) · PULAR · CORRER/AGACHAR alternam
+      <b>Android (paisagem):</b> joystick esquerdo mover · arrastar direita olhar · ATIRAR/MIRAR (segurar) · PULAR · CORRER/AGACHAR (alternam)
     </div>
   </div>
 
@@ -236,7 +373,66 @@
     <input id="sens-mouse" type="range" min="0.5" max="2" step="0.1" value="1" />
     <label>Toque <span id="sens-touch-val">1.0×</span></label>
     <input id="sens-touch" type="range" min="0.5" max="2" step="0.1" value="1" />
-    <button id="sens-reset" type="button">RESTAURAR PADRÃO</button>
+    <button id="sens-reset" class="ghost-btn" type="button">RESTAURAR PADRÃO</button>
+  </div>
+
+  <!-- LOBBY: entra na partida (tenta tela cheia + paisagem no mesmo toque) -->
+  <div id="lobby" class="show">
+    <div id="lobby-brand">
+      <div class="kicker">BATTLE ROYALE · 10 MIN · WEBGL 2</div>
+      <h1>OPERATION <span>ZERO</span></h1>
+      <p>Salto livre, cidade tomada, 44 bots armados. Último de pé leva o Booyah.</p>
+      <div id="lobby-status">PRONTO PARA O SALTO</div>
+      <div id="lobby-info">SOLO · 24 bots · dificuldade normal</div>
+    </div>
+    <div id="lobby-panel">
+      <div class="lobby-row">
+        <div class="label">MODO</div>
+        <div class="seg" id="lobby-mode">
+          <button type="button" data-value="solo" class="on" aria-pressed="true">SOLO</button>
+          <button type="button" data-value="duo" aria-pressed="false">DUO (1 ALIADO)</button>
+        </div>
+      </div>
+      <div class="lobby-row">
+        <div class="label">BOTS NA PARTIDA</div>
+        <div class="seg" id="lobby-bots">
+          <button type="button" data-value="0" aria-pressed="false">TREINO</button>
+          <button type="button" data-value="12" aria-pressed="false">12</button>
+          <button type="button" data-value="24" aria-pressed="true">24</button>
+          <button type="button" data-value="44" aria-pressed="false">44</button>
+        </div>
+      </div>
+      <div class="lobby-row">
+        <div class="label">DIFICULDADE</div>
+        <div class="seg" id="lobby-diff">
+          <button type="button" data-value="treino" aria-pressed="false">TREINO</button>
+          <button type="button" data-value="normal" aria-pressed="true">NORMAL</button>
+          <button type="button" data-value="dificil" aria-pressed="false">DIFÍCIL</button>
+        </div>
+      </div>
+      <div class="lobby-row">
+        <div class="label">QUALIDADE</div>
+        <div class="seg" id="lobby-quality">
+          <button type="button" data-value="auto" class="on" aria-pressed="true">AUTO</button>
+          <button type="button" data-value="0" aria-pressed="false">ALTA</button>
+          <button type="button" data-value="1" aria-pressed="false">MÉDIA</button>
+          <button type="button" data-value="2" aria-pressed="false">BAIXA</button>
+        </div>
+      </div>
+      <button id="lobby-play" type="button">JOGAR</button>
+      <div id="lobby-foot">O toque em JOGAR pede <b>tela cheia</b> e <b>orientação paisagem</b> ao navegador — se o navegador negar, o jogo segue normal em janela.</div>
+    </div>
+  </div>
+
+  <!-- Resultado da partida -->
+  <div id="result">
+    <div class="box">
+      <div id="result-title">VOCÊ FOI ELIMINADO</div>
+      <div id="result-sub">--</div>
+      <div id="result-stats"></div>
+      <button id="result-again" class="ghost-btn" type="button">JOGAR DE NOVO</button>
+      <button id="result-lobby" class="ghost-btn" type="button" style="background:rgba(255,255,255,0.08)">VOLTAR AO LOBBY</button>
+    </div>
   </div>
 
   <div id="rotate-hint">📱 Vire o celular para jogar em modo paisagem</div>

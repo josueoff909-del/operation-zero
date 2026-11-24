@@ -11,7 +11,9 @@ import { Config } from './Config.js';
  * Multitouch simultâneo: andar + girar + atirar/mirar/pular ao mesmo tempo.
  * Sensibilidade ajustável via Settings (multiplicadores 0.5×–2.0×).
  * Expõe: getMoveInput(), consumeLookDelta() (radianos), isJumpPressed(),
- * isSprintHeld(), isFiring(), isAiming(), isCrouching().
+ * isSprintHeld(), isFiring(), isAiming(), isCrouching(), setEnabled(bool).
+ * setEnabled(false) (Lobby/resultado) zera tudo: o menu não herda "dedo
+ * preso" em botões, e o jogador não sai andando ao entrar na partida.
  */
 export class InputManager {
   constructor(canvas) {
@@ -20,6 +22,7 @@ export class InputManager {
     this.mouseDelta = { x: 0, y: 0 };
     this.pointerLocked = false;
     this.jumpQueued = false; // pulo por "borda" (pressionou neste frame)
+    this.reloadQueued = false; // recarga por "borda" (tecla R)
     this.sprintToggle = false; // botão CORRER alterna (mobile)
     this.sprintHeld = false; // Shift (desktop)
     this.firing = false; // botão ATIRAR / botão esquerdo do mouse
@@ -27,12 +30,30 @@ export class InputManager {
     this.crouchToggle = false; // botão AGACHAR / tecla C (alterna)
     this.sensMouse = 1; // multiplicador (Settings)
     this.sensTouch = 1; // multiplicador (Settings)
+    this.enabled = true; // false durante o Lobby (regra: nada de input solto no menu)
 
     this.joystick = null;
     this.touchLook = null;
     this._bindKeyboard();
     this._bindMouse();
     this._bindButtons();
+  }
+
+  /** Liga/desliga o consumo de input (Lobby / tela de resultado). */
+  setEnabled(enabled) {
+    this.enabled = enabled;
+    if (!enabled) {
+      // limpa o que ficou pendurado p/ o input não "pular" ao voltar
+      this.firing = false;
+      this.aiming = false;
+      this.jumpQueued = false;
+      this.reloadQueued = false;
+      this.mouseDelta.x = 0;
+      this.mouseDelta.y = 0;
+      if (this.touchLook) this.touchLook.consumeDelta();
+      if (this.joystick) this.joystick.reset();
+      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    }
   }
 
   /** Liga joystick + touch look aos elementos do DOM (chamado pelo Engine). */
@@ -53,6 +74,7 @@ export class InputManager {
         e.preventDefault();
         if (!e.repeat) this.jumpQueued = true;
       }
+      if (e.code === 'KeyR' && !e.repeat) this.reloadQueued = true;
       if (e.code === 'KeyC' && !e.repeat) {
         this.crouchToggle = !this.crouchToggle;
         const btn = document.getElementById('btn-crouch');
@@ -72,8 +94,10 @@ export class InputManager {
     // Escuta na janela (não no canvas): as zonas de toque cobrem a tela
     // e interceptariam o clique no desktop. Pointer Lock só com mouse.
     window.addEventListener('click', () => {
+      if (!this.enabled) return; // Lobby: clique não trava o mouse
       if (window.matchMedia('(pointer: fine)').matches && !this.pointerLocked) {
-        this.canvas.requestPointerLock();
+        const p = this.canvas.requestPointerLock();
+        if (p && typeof p.catch === 'function') p.catch(() => {}); // navegador pode negar
       }
     });
     document.addEventListener('pointerlockchange', () => {
@@ -88,13 +112,13 @@ export class InputManager {
       }
     });
     document.addEventListener('mousemove', (e) => {
-      if (!this.pointerLocked) return;
+      if (!this.pointerLocked || !this.enabled) return;
       this.mouseDelta.x += e.movementX || 0;
       this.mouseDelta.y += e.movementY || 0;
     });
     // Botões do mouse com Pointer Lock: esq. atira, dir. mira (ADS).
     window.addEventListener('mousedown', (e) => {
-      if (!this.pointerLocked) return;
+      if (!this.pointerLocked || !this.enabled) return;
       if (e.button === 0) this.firing = true;
       if (e.button === 2) this.aiming = true;
     });
@@ -171,6 +195,7 @@ export class InputManager {
   getMoveInput() {
     let x = 0;
     let y = 0;
+    if (!this.enabled) return { x: 0, y: 0 };
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) y += 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) y -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1;
@@ -196,6 +221,11 @@ export class InputManager {
    */
   consumeLookDelta() {
     const touch = this.touchLook ? this.touchLook.consumeDelta() : { x: 0, y: 0 };
+    if (!this.enabled) {
+      this.mouseDelta.x = 0;
+      this.mouseDelta.y = 0;
+      return { x: 0, y: 0 };
+    }
     const d = {
       x: this.mouseDelta.x * Config.MOUSE_SENSITIVITY * this.sensMouse
         + touch.x * Config.TOUCH_SENSITIVITY * this.sensTouch,
@@ -209,27 +239,34 @@ export class InputManager {
 
   /** true uma única vez por pressionamento (borda). */
   isJumpPressed() {
-    const pressed = this.jumpQueued;
+    const pressed = this.jumpQueued && this.enabled;
     this.jumpQueued = false;
     return pressed;
   }
 
   isSprintHeld() {
-    return this.sprintHeld || this.sprintToggle;
+    return this.enabled ? (this.sprintHeld || this.sprintToggle) : false;
   }
 
   /** true enquanto o botão ATIRAR / botão esquerdo estiver pressionado. */
   isFiring() {
-    return this.firing;
+    return this.enabled && this.firing;
   }
 
   /** true enquanto o botão MIRAR / botão direito estiver pressionado (ADS). */
   isAiming() {
-    return this.aiming;
+    return this.enabled && this.aiming;
+  }
+
+  /** true uma única vez por pressionamento de R (borda). */
+  isReloadPressed() {
+    const pressed = this.reloadQueued && this.enabled;
+    this.reloadQueued = false;
+    return pressed;
   }
 
   /** true enquanto agachado (botão AGACHAR / tecla C alternam). */
   isCrouching() {
-    return this.crouchToggle;
+    return this.enabled ? this.crouchToggle : false;
   }
 }

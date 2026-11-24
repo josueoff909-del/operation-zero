@@ -17,6 +17,20 @@ export class PerformanceMonitor {
     this.lowTime = 0; // tempo acumulado abaixo do limiar
     this.highTime = 0; // tempo acumulado acima do limiar
     this.cooldown = 0; // evita mudanças em rajada
+    this.auto = true; // false = o jogador fixou a qualidade no Lobby
+  }
+
+  /**
+   * AUTO = adaptação ligada. OFF = o jogador escolheu ALTA/MÉDIA/BAIXA no
+   * Lobby e o monitor não pode brigar com a escolha (mas continua medindo FPS
+   * p/ o HUD).
+   */
+  setAuto(enabled) {
+    this.auto = !!enabled;
+    if (!this.auto) {
+      this.lowTime = 0;
+      this.highTime = 0;
+    }
   }
 
   /** Chamado a cada frame pelo Loop (rawDelta sem clamp p/ medir FPS real). */
@@ -29,7 +43,7 @@ export class PerformanceMonitor {
     }
     this.cooldown = Math.max(0, this.cooldown - rawDelta);
 
-    if (this.cooldown > 0) return;
+    if (this.cooldown > 0 || !this.auto) return;
 
     if (this.fpsEMA < Config.FPS_LOW_THRESHOLD) {
       this.lowTime += rawDelta;

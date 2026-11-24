@@ -104,9 +104,8 @@ export class Viewmodel {
   /**
    * @param {number} dt tempo do frame (≤ 0.05)
    * @param {{speed:number, sprinting:boolean, aiming:boolean, firing:boolean, onGround:boolean, lookX:number, lookY:number}} state
-   * @param {() => void} onFire chamado a cada disparo (coice de câmera no Player)
    */
-  update(dt, state, onFire) {
+  update(dt, state) {
     // --- ADS: mistura quadril ↔ mira ---
     const adsTarget = state.aiming ? 1 : 0;
     this.adsBlend += (adsTarget - this.adsBlend) * Math.min(1, dt * 12);
@@ -149,17 +148,7 @@ export class Viewmodel {
       runTilt + this.swayX * 0.4,
     );
 
-    // --- Tiro (visual): cadência, flash, tracer, coice ---
-    if (state.firing) {
-      this.fireTimer -= dt;
-      while (this.fireTimer <= 0) {
-        this._shoot();
-        if (onFire) onFire();
-        this.fireTimer += 1 / Config.FIRE_RATE;
-      }
-    } else {
-      this.fireTimer = 0;
-    }
+    // flash/tracer decaem em _shoot()/abaixo; o agendamento é do Combat.
 
     // --- Decaimento do flash e do tracer ---
     if (this.flashLife > 0) {
@@ -179,7 +168,7 @@ export class Viewmodel {
     }
   }
 
-  _shoot() {
+  _shoot(hitDistance = 0) {
     this.recoil = 1;
     this.flashLife = 0.04;
     this.flash.visible = true;
@@ -187,18 +176,50 @@ export class Viewmodel {
     const s = 0.8 + Math.random() * 0.5;
     this.flash.scale.set(s, s, s);
 
-    // Tracer do cano p/ frente da câmera (40m).
+    // Tracer do cano até o ponto de impacto (ou 40 m se não bateu em nada).
     const from = new THREE.Vector3();
     this.muzzle.getWorldPosition(from);
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
-    const len = 40;
+    const len = Math.max(6, Math.min(60, hitDistance > 0 ? hitDistance : 40));
     this.tracer.position.copy(from).addScaledVector(dir, len / 2);
     this.tracer.lookAt(from.clone().addScaledVector(dir, len));
     this.tracer.scale.set(1, 1, len);
     this.tracer.visible = true;
     this.tracer.material.opacity = 0.9;
     this.tracerLife = 0.07;
+  }
+
+  /** Volta ao estado neutro (nova partida). */
+  reset() {
+    this.recoil = 0;
+    this.adsBlend = 0;
+    this.swayX = 0;
+    this.swayY = 0;
+    this.fireTimer = 0;
+    this.flashLife = 0;
+    this.tracerLife = 0;
+    if (this.flash) { this.flash.visible = false; }
+    if (this.flashLight) { this.flashLight.intensity = 0; }
+    if (this.tracer) { this.tracer.visible = false; }
+  }
+
+  /** Só respiração (usado na câmera do Lobby, com a arma escondida). */
+  idle(dt) {
+    this.breathTime += dt;
+  }
+
+  /** Dispara o visual de UM tiro (chamado pelo Combat no ritmo da arma).
+   * @param {number} [hitDistance] distância até o impacto — o tracer para lá
+   *   em vez de voar 40 m "no nada" (feedback honesto de bala batendo em cobertura).
+   */
+  playShot(hitDistance = 0) {
+    this._shoot(hitDistance);
+  }
+
+  /** 0..1: o quanto a arma está "quentando" (p/ animar recuo/spread se quiser). */
+  get heat() {
+    return this.recoil;
   }
 
   dispose() {
