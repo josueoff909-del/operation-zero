@@ -71,6 +71,14 @@ export class Joystick {
     this.nub.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
   }
 
+  /** Zera o joystick (usado quando o input é desligado, ex.: Lobby). */
+  reset() {
+    this.activeTouchId = null;
+    this.vector.x = 0;
+    this.vector.y = 0;
+    if (this.base) this.base.style.display = 'none';
+  }
+
   /** Vetor atual (-1..1). Chamado pelo InputManager a cada frame. */
   getVector() {
     return this.vector;

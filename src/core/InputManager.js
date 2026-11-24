@@ -4,10 +4,16 @@ import { Config } from './Config.js';
 
 /**
  * InputManager.js — Unifica teclado + mouse + touch (Skill §3).
- * - Desktop: WASD/setas, Shift correr, Espaço pular, mouse com Pointer Lock.
- * - Android: joystick flutuante (esquerda) + Touch Look (direita) + botões.
- * Multitouch simultâneo: andar + girar + pular/correr ao mesmo tempo.
- * Expõe: getMoveInput(), consumeLookDelta(), isJumpPressed(), isSprintHeld().
+ * - Desktop: WASD/setas, Shift correr, Espaço pular, C agachar,
+ *   mouse com Pointer Lock (botão esq. atira, dir. mira/ADS).
+ * - Android (paisagem): joystick flutuante (esquerda) + Touch Look
+ *   (direita) + botões ATIRAR/MIRAR/PULAR/CORRER/AGACHAR.
+ * Multitouch simultâneo: andar + girar + atirar/mirar/pular ao mesmo tempo.
+ * Sensibilidade ajustável via Settings (multiplicadores 0.5×–2.0×).
+ * Expõe: getMoveInput(), consumeLookDelta() (radianos), isJumpPressed(),
+ * isSprintHeld(), isFiring(), isAiming(), isCrouching(), setEnabled(bool).
+ * setEnabled(false) (Lobby/resultado) zera tudo: o menu não herda "dedo
+ * preso" em botões, e o jogador não sai andando ao entrar na partida.
  */
 export class InputManager {
   constructor(canvas) {
@@ -16,8 +22,15 @@ export class InputManager {
     this.mouseDelta = { x: 0, y: 0 };
     this.pointerLocked = false;
     this.jumpQueued = false; // pulo por "borda" (pressionou neste frame)
+    this.reloadQueued = false; // recarga por "borda" (tecla R)
     this.sprintToggle = false; // botão CORRER alterna (mobile)
     this.sprintHeld = false; // Shift (desktop)
+    this.firing = false; // botão ATIRAR / botão esquerdo do mouse
+    this.aiming = false; // botão MIRAR / botão direito do mouse (ADS)
+    this.crouchToggle = false; // botão AGACHAR / tecla C (alterna)
+    this.sensMouse = 1; // multiplicador (Settings)
+    this.sensTouch = 1; // multiplicador (Settings)
+    this.enabled = true; // false durante o Lobby (regra: nada de input solto no menu)
 
     this.joystick = null;
     this.touchLook = null;
@@ -26,10 +39,33 @@ export class InputManager {
     this._bindButtons();
   }
 
+  /** Liga/desliga o consumo de input (Lobby / tela de resultado). */
+  setEnabled(enabled) {
+    this.enabled = enabled;
+    if (!enabled) {
+      // limpa o que ficou pendurado p/ o input não "pular" ao voltar
+      this.firing = false;
+      this.aiming = false;
+      this.jumpQueued = false;
+      this.reloadQueued = false;
+      this.mouseDelta.x = 0;
+      this.mouseDelta.y = 0;
+      if (this.touchLook) this.touchLook.consumeDelta();
+      if (this.joystick) this.joystick.reset();
+      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    }
+  }
+
   /** Liga joystick + touch look aos elementos do DOM (chamado pelo Engine). */
   attachTouch(joystickZone, joystickBase, joystickNub, lookZone) {
     this.joystick = new Joystick(joystickZone, joystickBase, joystickNub);
     this.touchLook = new TouchLook(lookZone);
+  }
+
+  /** Multiplicadores de sensibilidade vindos do painel de Settings. */
+  setSensitivity(mouseMult, touchMult) {
+    this.sensMouse = mouseMult;
+    this.sensTouch = touchMult;
   }
 
   _bindKeyboard() {
@@ -37,6 +73,12 @@ export class InputManager {
       if (e.code === 'Space') {
         e.preventDefault();
         if (!e.repeat) this.jumpQueued = true;
+      }
+      if (e.code === 'KeyR' && !e.repeat) this.reloadQueued = true;
+      if (e.code === 'KeyC' && !e.repeat) {
+        this.crouchToggle = !this.crouchToggle;
+        const btn = document.getElementById('btn-crouch');
+        if (btn) btn.classList.toggle('active', this.crouchToggle);
       }
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.sprintHeld = true;
       this.keys.add(e.code);
@@ -52,25 +94,46 @@ export class InputManager {
     // Escuta na janela (não no canvas): as zonas de toque cobrem a tela
     // e interceptariam o clique no desktop. Pointer Lock só com mouse.
     window.addEventListener('click', () => {
+      if (!this.enabled) return; // Lobby: clique não trava o mouse
       if (window.matchMedia('(pointer: fine)').matches && !this.pointerLocked) {
-        this.canvas.requestPointerLock();
+        const p = this.canvas.requestPointerLock();
+        if (p && typeof p.catch === 'function') p.catch(() => {}); // navegador pode negar
       }
     });
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = document.pointerLockElement === this.canvas;
+      // A dica de mouse só existe no desktop (nunca no mobile).
+      const fine = window.matchMedia('(pointer: fine)').matches;
       const hint = document.getElementById('lock-hint');
-      if (hint) hint.classList.toggle('hidden', this.pointerLocked);
+      if (hint) hint.classList.toggle('hidden', !fine || this.pointerLocked);
+      if (!this.pointerLocked) {
+        this.firing = false;
+        this.aiming = false;
+      }
     });
     document.addEventListener('mousemove', (e) => {
-      if (!this.pointerLocked) return;
+      if (!this.pointerLocked || !this.enabled) return;
       this.mouseDelta.x += e.movementX || 0;
       this.mouseDelta.y += e.movementY || 0;
+    });
+    // Botões do mouse com Pointer Lock: esq. atira, dir. mira (ADS).
+    window.addEventListener('mousedown', (e) => {
+      if (!this.pointerLocked || !this.enabled) return;
+      if (e.button === 0) this.firing = true;
+      if (e.button === 2) this.aiming = true;
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this.firing = false;
+      if (e.button === 2) this.aiming = false;
+    });
+    document.addEventListener('contextmenu', (e) => {
+      if (this.pointerLocked) e.preventDefault();
     });
   }
 
   _bindButtons() {
+    // PULAR (borda) — Fase 1, mantido.
     const jumpBtn = document.getElementById('btn-jump');
-    const sprintBtn = document.getElementById('btn-sprint');
     if (jumpBtn) {
       jumpBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
@@ -78,6 +141,8 @@ export class InputManager {
       }, { passive: false });
       jumpBtn.addEventListener('mousedown', () => { this.jumpQueued = true; });
     }
+    // CORRER (alterna) — Fase 1, mantido.
+    const sprintBtn = document.getElementById('btn-sprint');
     if (sprintBtn) {
       const toggle = (e) => {
         e.preventDefault();
@@ -87,6 +152,40 @@ export class InputManager {
       sprintBtn.addEventListener('touchstart', toggle, { passive: false });
       sprintBtn.addEventListener('mousedown', toggle);
     }
+    // ATIRAR / MIRAR (segurar) e AGACHAR (alterna) — Fase 2.
+    this._bindHoldButton(document.getElementById('btn-fire'), (v) => { this.firing = v; });
+    this._bindHoldButton(document.getElementById('btn-aim'), (v) => { this.aiming = v; });
+    const crouchBtn = document.getElementById('btn-crouch');
+    if (crouchBtn) {
+      const toggle = (e) => {
+        e.preventDefault();
+        this.crouchToggle = !this.crouchToggle;
+        crouchBtn.classList.toggle('active', this.crouchToggle);
+      };
+      crouchBtn.addEventListener('touchstart', toggle, { passive: false });
+      crouchBtn.addEventListener('mousedown', toggle);
+    }
+  }
+
+  /** Botão de segurar: touch + mouse, com classe .active enquanto pressionado. */
+  _bindHoldButton(el, set) {
+    if (!el) return;
+    const on = (e) => {
+      e.preventDefault();
+      set(true);
+      el.classList.add('active');
+    };
+    const off = (e) => {
+      e.preventDefault();
+      set(false);
+      el.classList.remove('active');
+    };
+    el.addEventListener('touchstart', on, { passive: false });
+    el.addEventListener('touchend', off, { passive: false });
+    el.addEventListener('touchcancel', off, { passive: false });
+    el.addEventListener('mousedown', on);
+    el.addEventListener('mouseup', off);
+    el.addEventListener('mouseleave', off);
   }
 
   /**
@@ -96,6 +195,7 @@ export class InputManager {
   getMoveInput() {
     let x = 0;
     let y = 0;
+    if (!this.enabled) return { x: 0, y: 0 };
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) y += 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) y -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1;
@@ -114,12 +214,23 @@ export class InputManager {
     return { x, y };
   }
 
-  /** Deltas de olhar acumulados (mouse + touch), zerados após leitura. */
+  /**
+   * Deltas de olhar em RADIANOS (já com sensibilidade aplicada).
+   * Mouse e toque têm sensibilidades próprias (Config × Settings).
+   * O Player aplica a redução de ADS por cima.
+   */
   consumeLookDelta() {
     const touch = this.touchLook ? this.touchLook.consumeDelta() : { x: 0, y: 0 };
+    if (!this.enabled) {
+      this.mouseDelta.x = 0;
+      this.mouseDelta.y = 0;
+      return { x: 0, y: 0 };
+    }
     const d = {
-      x: this.mouseDelta.x + touch.x,
-      y: this.mouseDelta.y + touch.y,
+      x: this.mouseDelta.x * Config.MOUSE_SENSITIVITY * this.sensMouse
+        + touch.x * Config.TOUCH_SENSITIVITY * this.sensTouch,
+      y: this.mouseDelta.y * Config.MOUSE_SENSITIVITY * this.sensMouse
+        + touch.y * Config.TOUCH_SENSITIVITY * this.sensTouch,
     };
     this.mouseDelta.x = 0;
     this.mouseDelta.y = 0;
@@ -128,17 +239,34 @@ export class InputManager {
 
   /** true uma única vez por pressionamento (borda). */
   isJumpPressed() {
-    const pressed = this.jumpQueued;
+    const pressed = this.jumpQueued && this.enabled;
     this.jumpQueued = false;
     return pressed;
   }
 
   isSprintHeld() {
-    return this.sprintHeld || this.sprintToggle;
+    return this.enabled ? (this.sprintHeld || this.sprintToggle) : false;
   }
 
-  /** Sensibilidade conforme a fonte do delta (mouse vs. touch). */
-  getSensitivity() {
-    return Config.MOUSE_SENSITIVITY;
+  /** true enquanto o botão ATIRAR / botão esquerdo estiver pressionado. */
+  isFiring() {
+    return this.enabled && this.firing;
+  }
+
+  /** true enquanto o botão MIRAR / botão direito estiver pressionado (ADS). */
+  isAiming() {
+    return this.enabled && this.aiming;
+  }
+
+  /** true uma única vez por pressionamento de R (borda). */
+  isReloadPressed() {
+    const pressed = this.reloadQueued && this.enabled;
+    this.reloadQueued = false;
+    return pressed;
+  }
+
+  /** true enquanto agachado (botão AGACHAR / tecla C alternam). */
+  isCrouching() {
+    return this.enabled ? this.crouchToggle : false;
   }
 }

@@ -7,12 +7,18 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 5173"
+    "preview": "vite preview --host 0.0.0.0 --port 5173",
+    "test": "node tests/world-smoke.test.mjs",
+    "test:ui": "node tests/ui-dom-smoke.test.mjs",
+    "test:all": "node tests/world-smoke.test.mjs && node tests/ui-dom-smoke.test.mjs",
+    "bench": "node tests/perf-bench.mjs",
+    "lint": "eslint src tests --ext .js,.mjs"
   },
   "dependencies": {
     "three": "^0.160.0"
   },
   "devDependencies": {
+    "eslint": "^8.57.1",
     "vite": "^5.4.0"
   }
 }

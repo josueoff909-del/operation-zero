@@ -18,7 +18,7 @@ export class SceneManager {
       75,
       window.innerWidth / window.innerHeight,
       0.1,
-      600, // longe o bastante p/ ver o mapa inteiro + céu
+      1250, // longe o bastante p/ o anel de montanhas distante (Backdrop)
     );
     camera.rotation.order = 'YXZ'; // Skill §3: Euler YXZ evita Gimbal Lock
     return camera;
@@ -29,12 +29,19 @@ export class SceneManager {
     if (this.scene) this.disposeScene(this.scene);
     this.scene = scene;
     this.camera = camera;
-    window.addEventListener('resize', () => {
-      if (this.camera) {
-        this.camera.aspect = window.innerWidth / window.innerHeight;
-        this.camera.updateProjectionMatrix();
-      }
-    });
+    if (!this._resizeBound) {
+      this._onResize = () => this.resizeCamera();
+      window.addEventListener('resize', this._onResize);
+      this._resizeBound = true;
+    }
+    this.resizeCamera();
+  }
+
+  /** Reajusta aspect/projection (resize da janela, entrada em tela cheia). */
+  resizeCamera() {
+    if (!this.camera) return;
+    this.camera.aspect = Math.max(0.2, window.innerWidth / Math.max(1, window.innerHeight));
+    this.camera.updateProjectionMatrix();
   }
 
   /** Percorre a cena e libera GPU resources (geometrias, materiais, texturas). */
