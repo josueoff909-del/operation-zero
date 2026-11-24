@@ -32,5 +32,8 @@ export class HUD {
     if (this.posEl && playerPos) {
       this.posEl.textContent = `${playerPos.x.toFixed(0)}, ${playerPos.z.toFixed(0)}`;
     }
+    if (this.stateEl && playerState) {
+      this.stateEl.textContent = playerState;
+    }
   }
 }

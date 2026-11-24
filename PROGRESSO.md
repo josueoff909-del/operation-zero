@@ -83,6 +83,20 @@ Android (paisagem): joystick esquerdo + arrastar direita + ATIRAR/MIRAR (segurar
 Explore a cidade: entre nos prédios pelas portas, suba nos crates, use os muros baixos como cobertura.
 HUD mostra FPS, ms/frame, draw calls, triângulos, qualidade, posição e estado (EM PÉ/CORRENDO/MIRANDO/AGACHADO).
 
+## Correções pós-Fase 2 (hotfix de runtime)
+
+- **`Uncaught ReferenceError: randPos is not defined`** (Vercel/navegador): a chamada `randPos()` em
+  `src/world/Vegetation.js` foi escrita, mas a declaração da função não tinha sido salva — o `place()`
+  voltou ao sorteio antigo e o `catch` silencioso não existia, então a cena inteira morria no boot.
+  Corrigido declarando `randPos` dentro de `_scatter()` (recusa posições dentro de
+  `Config.VEGETATION_TOWN_CLEAR`), usada por **troncos/copas e pedras/arbustos**.
+- **`stat-state` do HUD** sempre em "EM PÉ": `HUD.update()` recebia `playerState` mas não o escrevia
+  no DOM. Ligado em `src/ui/HUD.js`.
+- **Como foi validado** (o `npm run build` não pega esse tipo de erro — é referência a nome, não sintaxe):
+  `eslint --rule no-undef` em todo `src/` (0 erros), teste de runtime dos módulos `Vegetation` +
+  `Buildings` + `Collision` fora do navegador (sem `ReferenceError`, vegetação a ≥ 60 m do centro,
+  jogador empurrado para fora de parede) e checagem de que todo `getElementById` tem o id em `index.html`.
+
 ## Próximos passos (Fase 3 — NÃO iniciar sem concluir a Fase 2)
 
 1. Validar FPS em dispositivo Android real (orçamento: 60 FPS estáveis).

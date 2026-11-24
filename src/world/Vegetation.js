@@ -32,10 +32,21 @@ export class Vegetation {
     const half = Config.WORLD_SIZE / 2 - 6;
     const dummy = new THREE.Object3D();
 
+    // Fase 2: a cidade (prédios/ruas) ocupa o centro — vegetação só fora dela.
+    const randPos = () => {
+      let x = 0;
+      let z = 0;
+      for (let tries = 0; tries < 24; tries++) {
+        x = (rand() * 2 - 1) * half;
+        z = (rand() * 2 - 1) * half;
+        if (Math.hypot(x, z) >= Config.VEGETATION_TOWN_CLEAR) break;
+      }
+      return { x, z };
+    };
+
     const place = (mesh, minScale, maxScale) => {
       for (let i = 0; i < mesh.count; i++) {
-        const x = (rand() * 2 - 1) * half;
-        const z = (rand() * 2 - 1) * half;
+        const { x, z } = randPos();
         const y = terrainHeight(x, z);
         const s = minScale + rand() * (maxScale - minScale);
         dummy.position.set(x, y, z);
