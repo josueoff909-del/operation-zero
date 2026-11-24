@@ -853,7 +853,11 @@ await check('CSS: gás/minimapa/zona não roubam toque e têm contraste', async 
   assert.match(zgm, /radial-gradient/, 'vinheta de gás sem gradiente (some no AMOLED)');
   assert.match(css, /@keyframes gaspulse/, 'gás sem pulso: o jogador não percebe que está queimando');
   assert.match(css, /@keyframes zoneblink/, 'contador de "FECHANDO" sem alerta piscante');
-  assert.match(css, /#minimap \{[\s\S]{0,400}z-index/, 'minimapa sem z-index próprio');
+  const mmRule = css.slice(css.indexOf('#minimap {'), css.indexOf('#minimap {') + 420);
+  const mmZ = Number(/z-index:\s*(\d+)/.exec(mmRule)?.[1] ?? 0);
+  const lobbyZ = Number(/#lobby \{[\s\S]{0,200}?z-index:\s*(\d+)/.exec(css)?.[1] ?? 0);
+  assert.ok(mmZ > 0, 'minimapa sem z-index próprio');
+  assert.ok(mmZ >= lobbyZ, `minimapa (${mmZ}) atrás do véu do Lobby (${lobbyZ}) — o preview da arena some no menu`);
   // o #zone-hud só aparece com o HUD de partida (nunca no lobby)
   assert.match(css, /#hud-match\.show #zone-hud \{ opacity: 1/, 'HUD da zona visível no lobby');
 });

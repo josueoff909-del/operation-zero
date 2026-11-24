@@ -401,7 +401,11 @@ export class Engine {
     this.bots.update(dt, { player: this.player, zone: this.zone, zoneTick });
 
     // --- minimapa (12 Hz, canvas 2D) ---
-    this.minimap.update(dt, { player: this.player, zone: this.zone, bots: this.bots });
+    // no Lobby ele vira o preview da arena (sem jogador, sem círculo, sem bots):
+    // mostrar um muro de zona em volta de nada no menu é ruído.
+    this.minimap.update(dt, phase === PHASE.MATCH
+      ? { player: this.player, zone: this.zone, bots: this.bots }
+      : { player: null, zone: null, bots: null });
 
     // --- Sombra segue o jogador (materials-lighting skill) ---
     if (Config.SHADOW_FOLLOW_PLAYER) {

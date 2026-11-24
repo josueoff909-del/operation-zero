@@ -338,7 +338,9 @@
 
     /* ---------- MINIMAPA (Fase 11) ---------- */
     #minimap {
-      position: fixed; z-index: 10; pointer-events: none;
+      /* 26: fica ACIMA do véu do Lobby (25) de propósito — o minimapa é o
+         preview da arena no menu também, não só HUD de partida */
+      position: fixed; z-index: 26; pointer-events: none;
       top: max(10px, env(safe-area-inset-top));
       right: max(60px, calc(env(safe-area-inset-right) + 60px));
       width: var(--minimap-size); height: var(--minimap-size);

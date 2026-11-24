@@ -279,6 +279,12 @@ dano fora"*. Cada item abaixo é uma resposta direta, com o arquivo onde mora.
   (`Minimap.drawBaseMap` — 1 paint, sem depender do Engine) e botão
   `▶ DEPLOY` com brilho; o `#lobby::before` é um véu tático em gradiente — sem
   o "formulário cinza sobre cinza" de antes.
+- [x] Órbita do menu refeita (132 m de raio, 66 m de altura, FOV 58, alvo 16 %
+  na direção do lago): antes a 58 m o quadro só cabia prédios — era metade do
+  "lobby feio". O `#minimap` sobe para `z-index 26` (acima do véu do Lobby, que
+  é semitransparente) e no menu ele desenha **só o mapa** — sem círculo de zona
+  sem partida. `Lobby.destroy()` solta os listeners de `window` (dois Lobys =
+  dois `Enter` no mesmo GameState, que era o flaky do teste).
 
 ### Verificação deste ciclo
 - [x] `npm run test` → **50 checks ok** (eram 32): +8 de mapa (POIs, plateau,
