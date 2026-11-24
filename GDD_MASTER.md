@@ -1,50 +1,89 @@
-Atue como um arquiteto de jogos sênior, game designer e engenheiro de sistemas especialista em jogos battle royale em terceira pessoa de ritmo rápido (inspirados em Free Fire). Sua tarefa é gerar a especificação completa, a arquitetura técnica, os sistemas de jogo e o código base modular para recriar um jogo battle royale em terceira pessoa com partidas rápidas (cerca de 10 minutos, até 50 jogadores), zona segura encolhendo progressivamente, loot no mapa, movimentação ágil e combate tático.
+# OPERATION ZERO — DOCUMENTO MESTRE & SKILL TÉCNICA (FPS MUNDO ABERTO ANDROID)
 
-Não restrinja a implementação a HTML5/Canvas ou aplicações web simples; projete a arquitetura de forma agnóstica ou focada em um motor/estrutura profissional escalável (como Unity/C#, Unreal ou arquitetura cliente-servidor limpa), deixando claro como cada módulo se conecta.
+Leia este documento integralmente antes de realizar qualquer alteração no projeto.
 
-Estruture sua resposta de forma completa e técnica cobrindo obrigatoriamente os seguintes tópicos:
+Você está assumindo o papel de uma equipe profissional de desenvolvimento de jogos (programação 3D, game design, IA, animação, UI/UX mobile, física e otimização WebGL 2).
 
-1. VISÃO GERAL E GAME LOOP (BATTLE ROYALE RÁPIDO)
-- Duração alvo da partida, número de jogadores, modos (solo, duo, esquadrão).
-- Fluxo completo da partida: lobby de espera -> embarque no avião/transporte -> salto de paraquedas com controle de direção e velocidade de queda -> pouso e busca por loot -> rotações sob a zona segura -> confrontos finais -> vitória (Booyah / último sobrevivente ou esquadrão).
-- Ritmo de progressão e micro-objetivos para evitar tempos mortos.
+Não interprete este projeto como uma demonstração visual simples. O objetivo é construir um jogo FPS de mundo aberto original, fluido (60 FPS no Android), com sistemas integrados e funcionalidades verificáveis.
 
-2. MAPA, AMBIENTE E ZONA SEGURA (SAFE ZONE / GÁS)
-- Estrutura do mapa: biomas/regiões nomeadas, pontos de interesse (POIs) com alta/média/baixa densidade de loot, coberturas (muros, pedras, veículos, construções) e rotas de rotação.
-- Sistema de zona segura em múltiplas fases: raio inicial, centro aleatório ou semi-ponderado, tempo de espera, tempo de fechamento, dano por tick escalonado por fase e feedback visual/sonoro no HUD e no mundo.
-- Mecânicas de prevenção de camping extremo ou zonas finais previsíveis.
+---
 
-3. MOVIMENTAÇÃO, CONTROLES E FÍSICA
-- Movimentação em terceira pessoa: corrida, sprint, andar agachado, deitar/rolar (se aplicável), pulo, escalada/transposição de obstáculos baixos e sprint com arma vs. sem arma.
-- Câmera em terceira pessoa: posicionamento over-the-shoulder, colisão de câmera contra paredes/terreno, mira (hip-fire e ADS/mira de precisão) e sensibilidade ajustável.
-- Interação com ambiente e veículos terrestres (ex.: carro, moto, jipe): entrar/sair, dirigir, física de colisão, dano por atropelamento e destruição do veículo.
+## 1. VISÃO GERAL DO PRODUTO
+- **Nome:** OPERATION ZERO
+- **Gênero:** FPS (Primeira Pessoa) competitivo de exploração e sobrevivência em mundo aberto.
+- **Referências de UX/Fluidez:** Free Fire e Blood Strike (usar como padrão de responsividade de controles touch, clareza de HUD e ritmo, sem copiar marcas ou assets).
+- **Plataforma Prioritária:** Android (navegadores mobile em modo paisagem/landscape), com suporte secundário a PC (teclado/mouse).
+- **Pilares:** Câmera FPS com arma/mãos em primeira pessoa (viewmodel), mapa aberto de 2–3 km² com interiores acessíveis, 45 participantes (1 jogador + até 44 bots com IA), entrada por avião e paraquedas, coleta de recursos/equipamentos, objetivos disputados, zona segura progressiva, veículos funcionais e progressão real salva localmente.
 
-4. SISTEMA DE COMBATE, ARMAS E BALÍSTICA
-- Classes de armas: fuzis de assalto (AR), submetralhadoras (SMG), espingardas (SG), rifles de precisão/sniper (SR), pistolas e armas corpo a corpo/granadas.
-- Atributos de armas: dano base, queda de dano por distância (falloff), cadência de tiro (fire rate), tamanho do carregador, tempo de recarga, recuo (recoil) e dispersão (spread), velocidade de movimento ao portar.
-- Hit detection, hitboxes (cabeça, torso, membros), multiplicadores de dano, indicadores de hit/dano, efeitos visuais e sonoros de disparo, impacto e recarga.
-- Sistema de mira assistida/precisão e controle de cadência.
+---
 
-5. INVENTÁRIO, LOOT, CURA E HABILIDADES
-- Geração e distribuição de loot no chão e em caixas/drops aéreos (airdrops): armas, munição por calibre, coletes/capacetes (níveis de proteção e durabilidade), mochilas (capacidade de carga), kits médicos, inaladores/itens de escudo ou energia e granadas/paredes de gel (cover portátil).
-- Inventário rápido: coleta automática configurável, troca rápida de armas, uso de itens de cura em movimento ou parado com tempo de canalização e cancelamento.
-- Sistema de personagens/habilidades (opcional ou modular): habilidades ativas e passivas com cooldown, cargas e sinergias de esquadrão.
+## 2. DIRETRIZES TÉCNICAS OBRIGATÓRIAS (SKILL THREE.JS + ANDROID)
 
-6. ARQUITETURA TÉCNICA E REDE (MULTIPLAYER)
-- Arquitetura cliente-servidor (autoridade do servidor vs. predição no cliente, reconciliação, interpolação de entidades remotas).
-- Sincronização de estado: posição/rotação dos jogadores, tiros/projéteis ou raycasts, estado da zona segura, itens no chão, veículos e HP/escudo.
-- Otimizações para alta contagem de jogadores e dispositivos variados: object pooling, LOD (nível de detalhe), culling de oclusão/distância, ticks de rede e compressão de pacotes.
+### A. Arquitetura Modular (ES Modules + Vite)
+Nunca concentrar lógica em um único arquivo gigante. Manter separação estrita:
+- `/src/core/` — Engine, Loop (`deltaTime` limitado a `0.05s`), Renderer WebGL 2, SceneManager, InputManager.
+- `/src/world/` — Terreno 3D, regiões do mapa, interiores, vegetação, iluminação e clima.
+- `/src/entities/` — Player FPS (câmera + viewmodel), Bots (Máquina de Estados), Veículos, Avião e Paraquedas.
+- `/src/systems/` — Física/Colisões, Combate/Interação, Inventário, Zona Segura, Pontuação e SaveSystem (`localStorage`/IndexedDB).
+- `/src/ui/` — Lobby 3D, HUD Touch Paisagem, Minimapa, Bússola, Inventário e Configurações.
 
-7. IA DE BOTS E BALANCEAMENTO DE PARTIDA
-- Comportamento de bots para preencher lobbies ou treinar: navegação, busca por loot, reação a tiros, movimentação/cobertura e níveis de dificuldade.
-- Economia e pacing da partida: curva de escassez/abundância de loot, tamanho das zonas e janela de engajamento.
+### B. Otimização Extrema para Mobile (Meta: 60 FPS no Android)
+- **Pixel Ratio:** Limitar `renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))` (ajustável nas configurações gráficas: Baixo, Médio, Alto).
+- **InstancedMesh Obrigatório:** Usar `THREE.InstancedMesh` para árvores, rochas, estruturas repetidas, projéteis, itens e os 44 bots. Nunca instanciar dezenas de `THREE.Mesh` idênticos separadamente.
+- **Culling & LOD:** Ativar `frustumCulled = true` e usar `THREE.LOD` para construções e detalhes distantes.
+- **Gestão de Memória:** Sempre chamar `.dispose()` em geometrias, materiais e texturas ao trocar de cena (Lobby -> Avião -> Partida).
+- **IA Escalonada:** Nunca processar a tomada de decisão dos 44 bots no mesmo frame. Dividir em lotes (ex.: 11 bots por frame em ciclo de 4 frames), mantendo apenas a interpolação de movimento suave a 60 FPS.
 
-8. UI/UX, HUD E ÁUDIO
-- HUD em partida: minimapa com zona segura e direção do avião, contador de vivos/abates, barras de HP/colete, slots de armas e granadas/cura, botões/controles responsivos e hitmarkers.
-- Áudio posicional 3D: passos, direção de tiros, sons de veículos, alerta de zona e áudio espacial para leitura de ameaças.
+### C. Controles FPS Touch e Orientação (Android)
+- **Orientação Paisagem (Landscape):** Projetar todo o HUD para tela deitada, exibindo aviso amigável caso o celular esteja em pé e ocultando mensagens de "mouse/teclado" em dispositivos touchscreen.
+- **Multi-Touch Simultâneo (`e.touches`):** Permitir andar (joystick flutuante na metade esquerda), girar a câmera (arrasto livre na metade direita usando `Euler('YXZ')`) e acionar botões (Atirar, Mirar/ADS, Pular, Agachar, Correr, Interagir) ao mesmo tempo.
+- Bloquear gestos padrão do navegador (`touch-action: none` no CSS).
 
-9. CÓDIGO BASE E ESTRUTURA DE PROJETO
-- Apresente a árvore de pastas recomendada e implementações de código limpas, bem comentadas e funcionais para os sistemas centrais (ex.: gerenciador de partida e zona segura, controlador de jogador/combate/dano e sistema de inventário/loot).
-- Explique como expandir o código base para um jogo completo e jogável.
+---
 
-Escreva com profundidade técnica, clareza e organização. Evite resumos vagos: especifique regras, fórmulas ou estruturas de dados concretas sempre que possível.
+## 3. DIREÇÃO ARTÍSTICA E DESIGN DO MUNDO ABERTO
+- **Visual:** Moderno, tático e legível, com iluminação coerente, neblina atmosférica para profundidade/distância de visão e materiais PBR leves.
+- **Lobby Principal:** Hangar 3D em tempo real com personagem animado no centro e botões 100% funcionais (Jogar, Personagens, Coleção, Loja, Eventos, Perfil/XP/Moedas e Configurações).
+- **Mapa Aberto (2 a 3 km², construído por regiões testáveis):**
+  1. **Cidade:** Prédios variados, ruas, coberturas e interiores exploráveis.
+  2. **Complexo Industrial:** Galpões, contêineres e passarelas.
+  3. **Vila Rural:** Casas, estradas de terra e vegetação.
+  4. **Porto:** Docas, guindastes e armazéns.
+  5. **Florestas e Montanhas:** Relevos, mirantes e caminhos naturais.
+- *Regra:* Nunca criar grandes planos vazios; construir uma região rica e totalmente colidível primeiro e expandir após testes.
+
+---
+
+## 4. SISTEMAS DE JOGO INTEGRADOS
+1. **Movimentação & FPS:** Caminhada, corrida, salto, agachamento, colisão sólida (sem atravessar paredes), detecção de altura do terreno e viewmodel de arma/equipamento em primeira pessoa.
+2. **Entrada na Partida:** Avião percorrendo rota sobre o mapa com indicador no minimapa, salto livre, abertura de paraquedas, controle direcional na descida e pouso (incluindo os 44 bots).
+3. **Exploração, Loot & Objetivos:** Mochila/inventário funcional para itens, recursos de energia, armas/equipamentos e módulos de pontuação disputados pelos bots no mapa.
+4. **Zona Segura:** Círculo progressivo visível no mundo e no minimapa com temporizador, avisos e dano/desclassificação fora da área.
+5. **Veículos:** Entrada/saída, direção touch, aceleração, freio, colisão com terreno e câmera dedicada.
+6. **HUD Personalizável & Progressão:** Minimapa, bússola, vida/energia, vivos restantes, pontuação e editor de posição/tamanho dos botões touch salvos junto com XP, nível e estatísticas reais.
+
+---
+
+## 5. PLANO DE IMPLEMENTAÇÃO POR FASES (EXECUÇÃO CONTROLADA)
+- **FASE 1:** Arquitetura técnica modular e protótipo 3D base com contador de FPS.
+- **FASE 2:** Câmera FPS completa (viewmodel), controles touch paisagem e primeiras construções exploráveis com colisão sólida.
+- **FASE 3:** Personagens 3D e sistema de animações (respiração, andar, correr, pular, agachar, pouso).
+- **FASE 4:** Primeira região completa do mapa aberto (Cidade/Vila com interiores, estradas e pontos de interesse).
+- **FASE 5:** Lobby 3D integrado no hangar com interface funcional.
+- **FASE 6:** Sistema de avião, salto e paraquedas.
+- **FASE 7:** Sistema de exploração, coleta de loot e inventário funcional.
+- **FASE 8:** Inteligência Artificial dos bots (Máquina de Estados + desvio de obstáculos).
+- **FASE 9:** Sistema completo de 45 participantes na partida.
+- **FASE 10:** Objetivos distribuídos pelo mapa e Zona Segura progressiva.
+- **FASE 11:** Veículos funcionais com física de terreno.
+- **FASE 12:** HUD completo, minimapa, bússola e personalização de controles touch.
+- **FASE 13:** Tela de resultados, XP, níveis, coleção e salvamento persistente.
+- **FASE 14:** Expansão das demais regiões do mapa, balanceamento e otimização final Android.
+
+---
+
+## 6. REGRAS DE CONDUTA E CONTINUIDADE (ANTI-ESTOURO DE TOKENS)
+1. **Uma fase por vez:** Nunca tente programar múltiplas fases de uma só vez. Implemente apenas a fase solicitada com qualidade máxima e sem placeholders falsos.
+2. **Preservar o que funciona:** Nunca quebre ou apague sistemas das fases anteriores.
+3. **Registro obrigatório (`PROGRESSO.md`):** Ao final de cada etapa, atualize o arquivo `PROGRESSO.md` listando os arquivos criados/alterados, o que já está funcional e o próximo passo exato para a fase seguinte.
+4. **Verificação real:** Rode o build (`npm run build`) antes de concluir cada etapa para garantir zero erros de sintaxe ou importação.
