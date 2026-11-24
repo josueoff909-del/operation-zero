@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Config } from '../core/Config.js';
-import { terrainHeight } from '../utils/Noise.js';
+import { terrainHeight, roadAmount, isWater } from '../utils/Noise.js';
 
 /**
  * Vegetation.js — Vegetação e pedras com InstancedMesh (Skill §1).
@@ -52,7 +52,15 @@ export class Vegetation {
       for (let tries = 0; tries < 24; tries++) {
         x = (rand() * 2 - 1) * half;
         z = (rand() * 2 - 1) * half;
-        if (Math.hypot(x, z) >= minRadius) break;
+        if (Math.hypot(x, z) < minRadius) continue;
+        // Regras de mapa grande: árvore atravessando a estrada de terra,
+        // ilhota no meio do lago ou floresta dentro do depósito são os bugs
+        // visíveis que denunciam "espalhamos sem pensar". Então: rejeita.
+        if (roadAmount(x, z) > 0.18) continue;
+        if (isWater(x, z)) continue;
+        if (terrainHeight(x, z) < Config.WATER_LEVEL + 0.3) continue;
+        if (onPoi(x, z)) continue;
+        break;
       }
       return { x, z };
     };
@@ -236,4 +244,14 @@ export class Vegetation {
     this.colliders = [];
     this.trees = [];
   }
+}
+
+/** true se (x,z) cai dentro do plateau construído de algum POI (Config.POIS). */
+function onPoi(x, z) {
+  for (const poi of Config.POIS) {
+    const dx = x - poi.x;
+    const dz = z - poi.z;
+    if (dx * dx + dz * dz < poi.r * poi.r) return true;
+  }
+  return false;
 }

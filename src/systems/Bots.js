@@ -47,7 +47,7 @@ export class Bots {
     this._ctx = {
       time: 0, dtTick: 1 / 15, rng: this._rng,
       collision: this.collision, terrain: this.terrain, nav: this.nav,
-      targets: [], player: null,
+      targets: [], player: null, zone: null,
       fireBotShot: (bot) => this._fireBotShot(bot),
       claimRepath: () => this._claimRepath(),
     };
@@ -114,14 +114,38 @@ export class Bots {
   /**
    * Espalha bots pelo mapa longe do jogador. `allies` viram time 0 (DUO).
    */
-  spawn(count, { playerPos, allies = 0, level = Config.BOT_LEVELS.normal } = {}) {
+  /**
+   * @param {number} count
+   * @param {{playerPos?:THREE.Vector3, allies?:number, level?:number,
+   *          spots?:Array<{x:number,z:number}>}} opts
+   *   `spots`: pontos de interesse do mapa (cidade/depósito/lago...). Quando
+   *   passados, os bots são distribuídos ROUND-ROBIN entre os POIs — é isso que
+   *   faz a partida acontecer no mapa inteiro em vez de só em volta do spawn.
+   */
+  spawn(count, { playerPos, allies = 0, level = Config.BOT_LEVELS.normal, spots = null } = {}) {
     this.despawn();
     const total = Math.min(Config.BOT_MAX, count);
+    const poiSpots = spots && spots.length > 3 ? spots : null;
     for (let i = 0; i < total; i++) {
       const team = i < allies ? 0 : 1;
       const bot = new Bot(i, team, team === 0 ? Math.min(1, level + 0.15) : level,
         `${FIRST_NAMES[i % FIRST_NAMES.length]}${String(i + 1).padStart(2, '0')}`);
-      const spot = this._findSpawn(playerPos, team);
+      let spot = null;
+      if (poiSpots) {
+        for (let t = 0; t < 8 && !spot; t++) {
+          const p = poiSpots[(i * 5 + t * 11) % poiSpots.length];
+          const x = p.x + (this._rng() - 0.5) * 9;
+          const z = p.z + (this._rng() - 0.5) * 9;
+          if (this.collision.isBlockedCircle(x, z, Config.BOT_RADIUS + 0.25)) continue;
+          // o NavGrid é mais exigente que o raio do colisor (celha inteira
+          // livre). Validar aqui é o que impede o bot de nascer num vão de 1 m
+          // e ficar empurrando parede para sempre.
+          if (this.nav && !this.nav.isOpenWorld(x, z)) continue;
+          if (playerPos && Math.hypot(x - playerPos.x, z - playerPos.z) < 22) continue;
+          spot = { x, z, y: this.terrain ? this.terrain.getHeightAt(x, z) : 0 };
+        }
+      }
+      if (!spot) spot = this._findSpawn(playerPos, team);
       bot.onKilledBy = (fromTeam, part, meta) => this._onBotKilled(bot, fromTeam, part, meta);
       bot.spawnAt(spot.x, spot.y, spot.z, this._rng);
       if (team === 0 && playerPos) {
@@ -172,6 +196,7 @@ export class Bots {
     this.time += dt;
     this._ctx.time = this.time;
     this._ctx.player = extras.player;
+    this._ctx.zone = extras.zone || null;
     this._repathBudget = Config.BOT_REPATH_BUDGET;
 
     const n = this.list.length;
@@ -190,6 +215,16 @@ export class Bots {
 
     // --- integração de TODO bot, todo frame (movimento suave) ---
     for (const bot of this.list) bot.integrate(dt, this._ctx);
+
+    // --- dano do gás (mesmo tick do jogador, decidido pelo Engine) ---
+    if (extras.zoneTick && this._ctx.zone) {
+      const zone = this._ctx.zone;
+      for (const bot of this.list) {
+        if (!bot.alive) continue;
+        const dps = zone.dpsAt(bot.position.x, bot.position.z);
+        if (dps > 0) bot.takeDamage(dps, 'zone', -1, { zone: true });
+      }
+    }
 
     this._updateTracers(dt);
     this._writeInstances();
@@ -383,6 +418,7 @@ export class Bots {
       part,
       // abate do jogador é anunciado pelo Combat (lá é "VOCÊ eliminou ...")
       attackerName: meta && meta.byPlayer ? null : (meta && meta.attackerName) || null,
+      zone: !!(meta && meta.zone),
     });
   }
 

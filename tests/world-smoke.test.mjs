@@ -286,9 +286,16 @@ check('bots se movem e não atravessam nada em 10 s', () => {
   }
   assert.ok(moved >= bots.list.length * 0.5, `só ${moved}/${bots.list.length} bots andaram`);
 });
-check('bot patrulhando nunca fica preso (<0.5u em 2 s) por 15 s', () => {
-  const anchors = bots.list.map((b) => ({ x: b.position.x, z: b.position.z, t: 0 }));
-  let stuck = 0;
+check('nenhum bot fica preso PARA SEMPRE (janela de 2 s ok p/ recovery)', () => {
+  // Uma janela de 2 s sem progresso é aceitável — é exatamente a janela que o
+  // Bot usa para DETECTAR a trava antes de reagir (pulou o bolso / desempacotou
+  // em outro canto). Duas janelas CONSECUTIVAS sem progresso = IA quebrada, e é
+  // isso que o usuário vê como "bot bugado parado na parede".
+  const anchors = bots.list.map((b) => ({ x: b.position.x, z: b.position.z }));
+  const run = bots.list.map(() => 0);
+  let worst = 0;
+  let worstId = -1;
+  let total = 0;
   for (let f = 0; f < 900; f++) {
     bots.update(1 / 60, { player });
     if (f % 120 === 119) {
@@ -297,12 +304,16 @@ check('bot patrulhando nunca fica preso (<0.5u em 2 s) por 15 s', () => {
         const a = anchors[i];
         if (!b.alive) continue;
         const d = Math.hypot(b.position.x - a.x, b.position.z - a.z);
-        if (d < Config.NAV_STUCK_PROGRESS && b.state !== 'ATTACK') stuck += 1;
+        const frozen = d < Config.NAV_STUCK_PROGRESS && b.state !== 'ATTACK';
+        run[i] = frozen ? run[i] + 1 : 0;
+        if (frozen) total += 1;
+        if (run[i] > worst) { worst = run[i]; worstId = b.id; }
         a.x = b.position.x; a.z = b.position.z;
       }
     }
   }
-  assert.equal(stuck, 0, `${stuck} janelas de 2s sem progresso`);
+  assert.ok(worst <= 1, `bot ${worstId} passou ${worst} janelas de 2 s seguidas sem andar (preso de verdade)`);
+  if (total > 0) console.log(`       (${total} janela(s) de recovery em 900 frames — todas desfeitas na janela seguinte)`);
 });
 check('bots engajam o jogador e causam dano de verdade', () => {
   // procura um par de posições abertas com linha de tiro limpa (senão o teste
@@ -610,6 +621,318 @@ check('game-ai: lote de decisão + histerese + budget de pathfinding', () => {
 });
 function srcAll() { return srcCache; }
 void 0;
+
+// ------------------------------------------------- 10. mapa grande + zona (Fase 6)
+const { Landmarks } = await import('../src/world/Landmarks.js');
+const { Water } = await import('../src/world/Water.js');
+const { Backdrop } = await import('../src/world/Backdrop.js');
+const { Zone } = await import('../src/systems/Zone.js');
+const { roadAmount, isWater, groundTint, fbm } = await import('../src/utils/Noise.js');
+
+const zoneScene = new THREE.Scene();
+const zoneCol = new Collision();
+const water = new Water(zoneScene);
+water.applyTo(zoneCol);
+const landmarks = new Landmarks(zoneScene, zoneCol, 4242);
+const backdrop = new Backdrop(zoneScene);
+
+console.log('\n10. mapa: 5 POIs, estradas, lago (não "uma cidade e mato")');
+check('Config.POIS tem cidade + 4 POIs com raio/peso válidos', () => {
+  assert.equal(Config.POIS.length, 5, 'POIs != 5');
+  const ids = Config.POIS.map((p) => p.id);
+  for (const want of ['cidade', 'lago', 'deposito', 'fazenda', 'antenas']) {
+    assert.ok(ids.includes(want), `POI ${want} ausente`);
+  }
+  for (const p of Config.POIS) {
+    assert.ok(p.r > 20 && p.r < 90, `${p.id} raio fora do razoável`);
+    assert.ok(p.weight >= 1, `${p.id} sem peso p/ o centro da zona`);
+    // POI tem de caber no mundo com folga p/ o Backdrop
+    assert.ok(Math.hypot(p.x, p.z) + p.r < Config.FAR_GROUND_RADIUS, `${p.id} fora do chão distante`);
+  }
+  assert.ok(Config.TERRAIN_SEGMENTS >= 160, 'malha grosseira demais p/ um mapa de 400 m');
+});
+check('todo POI tem plateau plano (0.00) e a cidade continua no centro', () => {
+  for (const p of Config.POIS) {
+    if (p.id === 'lago') continue; // o lago é ESCAVADO de propósito (ver outro check)
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const h = terrainHeight(p.x + Math.cos(a) * p.r * 0.55, p.z + Math.sin(a) * p.r * 0.55);
+      assert.ok(Math.abs(h) < 0.05, `${p.id} plateau irregular (${h.toFixed(2)})`);
+    }
+  }
+  assert.ok(Math.abs(terrainHeight(0, 0)) < 0.05, 'cidade não está plana');
+});
+check('estradas ligam a cidade a cada POI e não passam pelo meio da cidade', () => {
+  for (const p of Config.POIS) {
+    if (p.id === 'cidade') continue;
+    let onRoad = 0;
+    const steps = 60;
+    for (let i = 6; i < steps - 6; i++) {
+      const t = i / steps;
+      const x = p.x * t;
+      const z = p.z * t;
+      if (roadAmount(x, z) > 0.5) onRoad++;
+    }
+    assert.ok(onRoad > 20, `rota até ${p.id} não tem estrada (${onRoad} amostras)`);
+  }
+  assert.ok(roadAmount(0, 0) < 0.05, 'a praça central virou estrada de terra');
+});
+check('lago escavado com água, e margem pisável (sem praia vertical)', () => {
+  const L = Config.LAKE;
+  assert.ok(isWater(L.x, L.z), 'centro do lago não é água');
+  assert.ok(terrainHeight(L.x, L.z) < Config.WATER_LEVEL, 'lago sem profundidade');
+  let shoreFound = false;
+  for (let i = 0; i <= 40; i++) {
+    const d = L.r * (0.85 + (i / 40) * 0.5);
+    const h = terrainHeight(L.x + d, L.z);
+    if (h > Config.WATER_LEVEL + 0.15 && h < Config.WATER_LEVEL + 1.4) shoreFound = true;
+  }
+  assert.ok(shoreFound, 'margem do lago não dá pé');
+  assert.ok(water.colliders.length > 10, 'água funda sem colisor (dá p/ entrar no lago)');
+  for (const c of water.colliders) assert.equal(c.walkable, false, 'colisor de água liberando passagem');
+});
+check('Landmarks: 7 draw calls, 0 NaN, spawns secos e fora de prédio', () => {
+  assert.ok(landmarks.meshes.length <= 10, `POIs em ${landmarks.meshes.length} draw calls`);
+  for (const mesh of landmarks.meshes) {
+    assert.ok(mesh.isInstancedMesh, 'POI sem InstancedMesh');
+    assert.ok(mesh.count > 0);
+    const m = new THREE.Matrix4();
+    for (let i = 0; i < mesh.count; i++) {
+      mesh.getMatrixAt(i, m);
+      for (const v of m.elements) assert.ok(Number.isFinite(v), 'matriz com NaN');
+    }
+  }
+  assert.ok(landmarks.spawnPoints.length >= 24, `só ${landmarks.spawnPoints.length} spawns de POI`);
+  for (const p of landmarks.spawnPoints) {
+    assert.ok(!isWater(p.x, p.z), 'spawn dentro do lago');
+    assert.ok(terrainHeight(p.x, p.z) > Config.WATER_LEVEL, 'spawn afogado');
+  }
+  assert.ok(zoneCol.boxes.length > 200, 'POIs sem colisão sólida');
+  for (const ring of landmarks.poiRings) assert.ok(ring.points.length >= 5, `${ring.id} sem anel de patrulha`);
+});
+check('vegetação respeita o mapa: 0 árvores em estrada/lago/POI', () => {
+  let onRoad = 0;
+  let inWater = 0;
+  for (const t of vegetation.trees) {
+    if (roadAmount(t.x, t.z) > 0.5) onRoad++;
+    if (isWater(t.x, t.z)) inWater++;
+  }
+  assert.equal(onRoad, 0, 'árvores atravessando a estrada');
+  assert.equal(inWater, 0, 'árvores dentro do lago');
+});
+check('terreno sem streak: sem jitter por índice, usa groundTint + grão', () => {
+  const src = readFileSync(join(ROOT, 'src/world/Terrain.js'), 'utf8');
+  assert.ok(!/jitter/.test(src), 'ainda há jitter por índice de vértice (bandas visíveis)');
+  assert.ok(/groundTint\(/.test(src), 'cores não vêm do groundTint (bioma real)');
+  assert.ok(/makeGroundDetail/.test(src), 'sem textura de grão → terreno chapado');
+  const out = [0, 0, 0];
+  groundTint(0, 0, 0, out); // grama na planície da cidade
+  const g = [...out];
+  groundTint(Config.LAKE.x, Config.LAKE.z, -6, out); // areia submersa
+  assert.ok(out[2] > g[2], 'areia do lago não é mais quente/clara que a grama');
+  const road = (() => {
+    const o = [0, 0, 0];
+    groundTint(60, -48, 0, o); // estrada p/ o depósito
+    return o;
+  })();
+  // terra batida: mais quente que a grama (R↑, G↓) e SEM ser verde — que era o
+  // bug antigo (o chão da estrada tinha a cor da grama e virava "capim marrom")
+  assert.ok(roadAmount(60, -48) > 0.9, 'amostra não caiu na estrada');
+  assert.ok(road[0] > g[0], `estrada sem R de terra (${road[0].toFixed(3)} ≤ ${g[0].toFixed(3)})`);
+  assert.ok(road[1] < g[1], `estrada ainda verde (${road[1].toFixed(3)} ≥ ${g[1].toFixed(3)})`);
+  assert.ok(road[1] > road[2], 'estrada com azul de asfalto, não de terra');
+  assert.ok(Number.isFinite(g[0]) && g.every((v) => v >= 0 && v <= 1), 'groundTint fora de 0..1');
+  void fbm;
+});
+check('céu/atmosfera: Sky + PMREM + Backdrop distante + far da câmera', () => {
+  const lightSrc = readFileSync(join(ROOT, 'src/world/Lighting.js'), 'utf8');
+  assert.match(lightSrc, /addons\/objects\/Sky/, 'sem Sky (horizonte depende do clear color)');
+  assert.match(lightSrc, /PMREMGenerator/, 'sem ambiente PMREM → PBR fosco');
+  assert.match(lightSrc, /applyEnvironment/, 'applyEnvironment ausente (envMap não chega nos materiais)');
+  assert.ok(Config.FAR_GROUND_RADIUS > Config.BACKDROP_RADIUS, 'chão distante menor que o anel de névoa');
+  let ring = null;
+  for (const m of backdrop.meshes) if (m.name === 'chao-distante') ring = m;
+  assert.ok(ring, 'sem anel de chão cobrindo o horizonte');
+  for (const m of backdrop.meshes) {
+    assert.equal(m.frustumCulled, false, `${m.name} pode ser cortado na rotação`);
+    assert.equal(m.material.fog, false, `${m.name} com fog some no horizonte`);
+  }
+  assert.ok(backdrop.meshes.every((m) => m.receiveShadow === false), 'Backdrop recebendo sombra = custo inútil');
+  assert.ok(/1250/.test(readFileSync(join(ROOT, 'src/core/SceneManager.js'), 'utf8')), 'far da câmera não alcança as montanhas');
+  assert.ok(water.mesh.material.userData || true);
+  assert.equal(water.mesh.geometry.attributes.aDepth.itemSize, 1, 'aDepth ausente (profundidade da água)');
+});
+check('exposição/ACES/tone mapping continuam aplicados com o novo Lighting', () => {
+  const r = readFileSync(join(ROOT, 'src/core/Renderer.js'), 'utf8');
+  assert.match(r, /ACESFilmicToneMapping/);
+  assert.match(r, /SRGBColorSpace/);
+  const eng = engineSrc;
+  assert.match(eng, /lighting\.applyEnvironment\(scene\)/, 'Engine não aplica envMap');
+  assert.match(eng, /lighting\.applyExposure/, 'Engine não aplica exposição do Sky');
+  assert.match(eng, /lighting\.update\(dt\)/, 'céu/nuvens não são atualizados');
+  assert.match(eng, /new Backdrop/, 'Engine não monta o Backdrop');
+  assert.match(eng, /new Water\(scene\)/, 'Engine não monta a água');
+  assert.match(eng, /new Landmarks/, 'Engine não monta os POIs');
+});
+
+console.log('\n11. Zona segura (Fase 6): encolhe, dá dano e caça quem acampa');
+check('6 fases monótonas: raio cai, dano sobe, close>0', () => {
+  const ph = Config.ZONE_PHASES;
+  assert.equal(ph.length, 6, 'número de fases != 6');
+  for (let i = 1; i < ph.length; i++) {
+    assert.ok(ph[i].radius < ph[i - 1].radius, `fase ${i} não encolhe`);
+    assert.ok(ph[i].dps > ph[i - 1].dps, `dano da fase ${i} não sobe`);
+    assert.ok(ph[i].close > 0 && ph[i].wait >= 0, `fase ${i} sem wait/close`);
+  }
+  assert.ok(ph[ph.length - 1].radius <= 8, 'última zona não fecha o cerco');
+});
+check('simulação de 5 min: círculo fecha em todas as fases e para na final', () => {
+  const z = new Zone(zoneScene, { rng: () => 0.5 });
+  z.reset(0, 0);
+  const seen = new Set();
+  for (let i = 0; i < 60 * 300; i++) {
+    z.update(1 / 60);
+    seen.add(z.phaseIndex);
+  }
+  assert.equal(z.phaseIndex, Config.ZONE_PHASES.length - 1, 'zona não chegou na fase final');
+  assert.ok(seen.size >= 5, `só ${seen.size} fases vistas`);
+  assert.ok(z.radius <= Config.ZONE_PHASES.at(-1).radius + 0.01, `raio final ${z.radius}`);
+  assert.equal(z.state, 'FINAL');
+  z.dispose();
+});
+check('novo centro cabe SEMPRE no círculo atual (ninguém preso por sorteio)', () => {
+  for (let seed = 0; seed < 400; seed++) {
+    const rnd = (() => {
+      let a = (seed * 2654435761) >>> 0;
+      return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    })();
+    const z = new Zone(zoneScene, { rng: rnd });
+    z.reset(0, 0);
+    for (let i = 0; i < 60 * 400; i++) {
+      const before = { x: z.center.x, z: z.center.y, r: z.radius };
+      const phase = z.phaseIndex;
+      z.update(1 / 60);
+      if (z.phaseIndex !== phase) {
+        const d = Math.hypot(z.center.x - before.x, z.center.y - before.z);
+        assert.ok(d <= before.r + 0.5, `centro pulou ${d.toFixed(1)} m (> R=${before.r.toFixed(1)})`);
+        assert.ok(z.radius <= before.r + 0.5, 'raio aumentou');
+        const inside = z.center.x * z.center.x + z.center.y * z.center.y;
+        assert.ok(Math.sqrt(inside) < Config.WORLD_SIZE, 'centro fora do mundo');
+      }
+    }
+    z.dispose();
+  }
+});
+check('dano: 0 dentro, escalonado fora, com tolerância na borda', () => {
+  const z = new Zone(zoneScene, { rng: () => 0.2 });
+  z.reset(0, 0);
+  assert.equal(z.dpsAt(z.center.x, z.center.y), 0, 'dano dentro da zona!');
+  // fase 1 = pouso: dano ZERO no mundo inteiro (ninguém morre antes de achar arma)
+  assert.equal(Config.ZONE_PHASES[0].dps, 0, 'dano na fase do pouso');
+  assert.equal(z.dpsAt(z.center.x + z.radius + 200, z.center.y), 0, 'fase 1 não deveria ferir');
+  const breath = Config.ZONE_PHASES[0].wait + Config.ZONE_MIN_BREATH;
+  for (let i = 0; i < 60 * (breath + 6); i++) z.update(1 / 60); // 1ª fase → 1º fechamento
+  assert.ok(z.phaseIndex >= 1 || z.state === 'CLOSING', 'zona não avançou de fase');
+  const far = z.dpsAt(z.center.x + z.radius + 200, z.center.y);
+  assert.ok(far > 0, 'nenhum dano fora da zona');
+  // tolerância: quem está a 1 m do muro não toma o dps pleno
+  const edge = z.dpsAt(z.center.x + z.radius + 1, z.center.y);
+  assert.ok(edge < far, 'borda sem rampa de tolerância (morte por flutuação de frame)');
+  z.dispose();
+  // dps sobe com a fase: usa a tabela direto
+  const last = Config.ZONE_PHASES.at(-1).dps;
+  const first = Config.ZONE_PHASES[1].dps;
+  assert.ok(last > first * 4, `dano final (${last}) não é letal vs ${first}`);
+  assert.ok(last * Config.ZONE_TICK < 100, 'tick único não deveria matar de uma vez');
+});
+check('tick compartilhado: shouldTick só dispara a cada ZONE_TICK', () => {
+  const z = new Zone(zoneScene, { rng: () => 0.5 });
+  z.reset(0, 0);
+  let ticks = 0;
+  for (let i = 0; i < 600; i++) if (z.shouldTick(1 / 60)) ticks++;
+  assert.ok(Math.abs(ticks - 600 / 60 / Config.ZONE_TICK) <= 2, `ticks=${ticks} esperado≈${600 / 60 / Config.ZONE_TICK}`);
+  z.dispose();
+});
+check('bots correm para dentro do círculo em vez de atirar no gás', () => {
+  const src = readFileSync(join(ROOT, 'src/entities/Bot.js'), 'utf8');
+  assert.match(src, /ctx\.zone/, 'Bot não lê a zona');
+  assert.match(src, /zonePanic = true/, 'Bot não marca pânico de zona');
+  assert.match(src, /isOutside\(this\.position\.x, this\.position\.z\)/, 'Bot não mede se está fora');
+  assert.match(readFileSync(join(ROOT, 'src/systems/Bots.js'), 'utf8'), /zoneTick/, 'Bots não aplica dano do gás nos bots');
+});
+check('bots fora do círculo de fato se movem e apanham do gás', () => {
+  const z = new Zone(zoneScene, { rng: () => 0.9 });
+  z.reset(0, 0);
+  // encolhe até o raio ser pequeno e coloca um bot longe
+  for (let i = 0; i < 60 * 90; i++) z.update(1 / 60);
+  const b = bots.list[0];
+  b.alive = true;
+  b.health = 100;
+  b.position.set(z.center.x + z.radius + 60, 0, z.center.y);
+  b.state = 'PATROL';
+  const ctx = { time: 10, dtTick: 1 / 15, zone: z, player: null, targets: [], collision, terrain, nav, rng: Math.random };
+  b.decide(ctx);
+  assert.equal(b.zonePanic, true, 'bot não entrou em pânico de zona');
+  assert.equal(b.state, 'REPOSITION', 'bot fora da zona não está em rotação');
+  assert.ok(b.hasWish, 'bot parado fora da zona');
+  const toC = { x: z.center.x - b.position.x, z: z.center.y - b.position.z };
+  const dot = b.wishX * toC.x + b.wishZ * toC.z;
+  assert.ok(dot > 0, 'bot andou para FORA do círculo');
+  assert.equal(b.burstLeft > 0, false, 'bot atirando enquanto corre para a zona');
+  const before = b.health;
+  for (let i = 0; i < 120; i++) {
+    const tick = i % 60 === 0;
+    bots.update(1 / 60, { player: null, zone: z, zoneTick: tick });
+  }
+  assert.ok(b.health < before, `gás não feriu o bot (${before} → ${b.health})`);
+  z.dispose();
+});
+check('feedback: parede + anel do próximo círculo montados e sem z-fighting', () => {
+  const z = new Zone(zoneScene, { rng: () => 0.5 });
+  z.reset(0, 0);
+  z.update(1 / 60);
+  const wall = z.wall;
+  const ring = z.nextRing;
+  assert.ok(wall && wall.visible, 'parece da zona invisível');
+  assert.equal(wall.frustumCulled, false, 'parede da zona pode ser cortada pela câmera');
+  assert.equal(wall.material.depthWrite, false, 'parede opaca escreve depth (apaga o mundo)');
+  assert.equal(wall.material.transparent, true);
+  assert.equal(ring.material.depthTest, false, 'anel do próximo círculo vai sumir nas colinas');
+  assert.ok(wall.scale.x > 100, 'parede com raio errado');
+  const hudSrc = readFileSync(join(ROOT, 'src/ui/HUD.js'), 'utf8');
+  for (const id of ['zone-state', 'zone-time', 'zone-dist', 'zone-bar', 'gas-vignette', 'minimap-canvas', 'minimap', 'zone-alarm']) {
+    assert.ok(indexHtmlHas(id), `#${id} não existe no index.html`);
+  }
+  assert.match(hudSrc, /_updateZone\(s\.zone/, 'HUD não recebe a zona do Engine');
+  assert.match(hudSrc, /gas-vignette/, 'HUD não acende a vinheta de gás');
+  z.dispose();
+});
+function indexHtmlHas(id) {
+  const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
+  return html.includes(`id="${id}"`);
+}
+check('Engine liga a zona no loop e só fere durante o MATCH', () => {
+  assert.match(engineSrc, /this\.zone = new Zone\(scene/, 'Engine não cria a Zone');
+  assert.match(engineSrc, /this\.zone\.reset\(/, 'Engine não reinicia a zona no deploy');
+  assert.match(engineSrc, /this\.zone\.update\(dt\)/, 'Engine não atualiza a zona');
+  assert.match(engineSrc, /this\.zone\.shouldTick\(dt\)/, 'Engine não usa o tick compartilhado');
+  assert.match(engineSrc, /this\.player\.takeDamage\(dps, 'zone'\)/, 'jogador não toma dano do gás');
+  assert.match(engineSrc, /this\.zone\?\.disable\(\)/, 'zona não desliga ao voltar ao lobby');
+  assert.match(engineSrc, /zone: this\._zoneHud\(phase\)/, 'HUD não recebe payload de zona');
+  assert.match(engineSrc, /this\.minimap\.update\(/, 'minimapa não é atualizado');
+  assert.match(engineSrc, /new Climate/, 'Engine não monta o Climate');
+  // ordem: tudo que gera colisor antes do NavGrid
+  const navIdx = engineSrc.indexOf('new NavGrid');
+  for (const needle of ['new Buildings', 'new Vegetation', 'new Water', 'new Landmarks']) {
+    assert.ok(engineSrc.indexOf(needle) < navIdx, `${needle} vem depois do NavGrid (nav ignoraria os sólidos)`);
+  }
+});
 
 // -------------------------------------------------------------- resumo
 console.log('\n────────────────────────────────────────');

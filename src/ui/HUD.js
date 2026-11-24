@@ -28,6 +28,12 @@ export class HUD {
     this.aliveEl = document.getElementById('stat-alive');
     this.timeEl = document.getElementById('stat-time');
     this.hitmarkerEl = document.getElementById('hitmarker');
+    this.zoneStateEl = document.getElementById('zone-state');
+    this.zoneTimeEl = document.getElementById('zone-time');
+    this.zoneDistEl = document.getElementById('zone-dist');
+    this.zoneBarEl = document.getElementById('zone-bar');
+    this.gasEl = document.getElementById('gas-vignette');
+    this.alarmEl = document.getElementById('zone-alarm');
     this.damageEl = document.getElementById('damage-vignette');
     this.feedEl = document.getElementById('kill-feed');
 
@@ -95,6 +101,42 @@ export class HUD {
       this.hitmarkerEl.classList.remove('on');
       this._hitAt = -1;
     }
+    this._updateZone(s.zone, s.now);
+  }
+
+  /**
+   * Zona segura (Fase 6): o HUD só LÊ a Zone — estado, tempo até fechar,
+   * distância até o círculo e a vinheta de gás quando o jogador está fora.
+   */
+  _updateZone(zone, now = 0) {
+    if (!zone) {
+      if (this.gasEl) this.gasEl.classList.remove('on');
+      if (this.alarmEl) this.alarmEl.classList.remove('on');
+      if (this.zoneBarEl) this.zoneBarEl.style.transform = 'scaleX(0)';
+      return;
+    }
+    if (this.zoneStateEl) {
+      this.zoneStateEl.textContent = zone.label;
+      this.zoneStateEl.classList.toggle('closing', zone.closing);
+    }
+    if (this.zoneTimeEl) {
+      this.zoneTimeEl.textContent = zone.closing ? `FECHANDO ${zone.countdown}` : `PRÓXIMA ${zone.countdown}`;
+    }
+    if (this.zoneDistEl) {
+      const d = Math.max(0, Math.round(zone.distance));
+      this.zoneDistEl.textContent = zone.outside ? `FORA DA ZONA · ${d} m` : `${d} m do centro`;
+      this.zoneDistEl.classList.toggle('danger', !!zone.outside);
+    }
+    if (this.zoneBarEl) this.zoneBarEl.style.transform = `scaleX(${Math.max(0, Math.min(1, zone.progress)).toFixed(3)})`;
+    if (this.gasEl) this.gasEl.classList.toggle('on', !!zone.outside);
+    if (this.alarmEl) {
+      this.alarmEl.classList.toggle('on', !!zone.outside);
+      if (zone.outside) {
+        // pulso em CSS: sem setInterval aqui (o HUD já é chamado no loop)
+        const pulse = 0.55 + 0.45 * Math.sin(now * 6);
+        this.alarmEl.style.opacity = String(pulse.toFixed(2));
+      }
+    }
   }
 
   /** hitmarker: X branco (acerto) / vermelho (kill) — fps-shooter skill. */
@@ -143,7 +185,10 @@ export class HUD {
   setMatchVisible(visible) {
     const el = document.getElementById('hud-match');
     if (el) el.classList.toggle('show', visible);
+    const mm = document.getElementById('minimap');
+    if (mm) mm.classList.toggle('show', visible);
     const hud = document.getElementById('hud-top');
     if (hud) hud.classList.toggle('dim', !visible);
+    if (!visible) this._updateZone(null); // sair da partida apaga gás/alarme
   }
 }

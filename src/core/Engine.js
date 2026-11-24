@@ -9,14 +9,20 @@ import { Terrain } from '../world/Terrain.js';
 import { Lighting } from '../world/Lighting.js';
 import { Vegetation } from '../world/Vegetation.js';
 import { Buildings } from '../world/Buildings.js';
+import { Landmarks } from '../world/Landmarks.js';
+import { Backdrop } from '../world/Backdrop.js';
+import { Water } from '../world/Water.js';
+import { Climate, CLIMATE } from '../world/Climate.js';
 import { Collision } from '../systems/Collision.js';
 import { NavGrid } from '../systems/NavGrid.js';
 import { Player } from '../entities/Player.js';
 import { Viewmodel } from '../entities/Viewmodel.js';
 import { Combat } from '../systems/Combat.js';
 import { Bots } from '../systems/Bots.js';
+import { Zone } from '../systems/Zone.js';
 import { GameState, PHASE } from '../systems/GameState.js';
 import { HUD } from '../ui/HUD.js';
+import { Minimap } from '../ui/Minimap.js';
 import { Settings } from '../ui/Settings.js';
 import { Lobby } from '../ui/Lobby.js';
 import { Immersive } from '../utils/Immersive.js';
@@ -24,10 +30,14 @@ import { Immersive } from '../utils/Immersive.js';
 /**
  * Engine.js — Orquestrador (núcleo das Fases 1–2 + fluxo de partida).
  *
- * Monta, nesta ordem (a ordem importa: colisão → navegação → bots):
- *   Renderer → SceneManager → InputManager → Terrain → Lighting →
- *   Vegetação (colisores) → Buildings (colisores) → Collision → NavGrid →
- *   Player → Viewmodel → Combat → Bots → HUD → Settings → GameState → Lobby.
+ * Monta, nesta ordem (a ordem importa: tudo que gera colisor vem ANTES da
+ * navegação, e a navegação vem antes dos bots):
+ *   Renderer → SceneManager → InputManager → Terrain → Lighting (céu/PMREM) →
+ *   Buildings → Vegetação → Water (lago) → Landmarks (POIs) → Collision →
+ *   NavGrid → Player → Viewmodel → Combat → Zone (Fase 6) → Bots →
+ *   HUD + Minimap → Settings → GameState → Lobby.
+ *
+ * Cada mundo novo (Fase 8: avião/paraquedas) entra aqui, não nos módulos.
  *
  * O Engine é o ÚNICO lugar que conhece todos os módulos; cada um continua
  * sozinho na sua pasta (Skill §2). Estado da partida em `GameState`, input em
@@ -51,7 +61,10 @@ export class Engine {
 
     // Qualidade adaptativa; MÍNIMA desliga a sombra do sol.
     this.performance = new PerformanceMonitor(this.renderer, (label) => {
-      if (this.lighting && this.lighting.sun) this.lighting.setShadowsEnabled(label !== 'MÍNIMA');
+      if (this.lighting && this.lighting.sun) {
+        this.lighting.setShadowsEnabled(label !== 'MÍNIMA');
+        this.lighting.setQuality(label); // nuvens/shadow map por nível
+      }
     });
 
     this.gameState = new GameState((next, prev, payload) => this._onPhaseChange(next, prev, payload));
@@ -66,6 +79,12 @@ export class Engine {
     this.lighting = null;
     this.vegetation = null;
     this.buildings = null;
+    this.backdrop = null;
+    this.water = null;
+    this.landmarks = null;
+    this.zone = null;
+    this.minimap = null;
+    this._zoneTickAt = 0;
     this.collision = new Collision();
     this.nav = null;
     this.player = null;
@@ -87,15 +106,26 @@ export class Engine {
     this.terrain = new Terrain();
     scene.add(this.terrain.mesh);
 
-    this.lighting = new Lighting(scene);
+    this.lighting = new Lighting(scene, { renderer: this.renderer.renderer });
 
     // Cidade (colisores dentro do construtor) + vegetação (colisores explícitos)
     this.buildings = new Buildings(scene, this.collision, (x, z) => this.terrain.getHeightAt(x, z));
     this.vegetation = new Vegetation(scene);
     this.vegetation.applyTo(this.collision);
+    // POIs novos: lago (água + margem funda bloqueando), depósito/fazenda/
+    // antenas/subúrbios. Tudo empurrando colisor na MESMA grade.
+    this.water = new Water(scene);
+    this.climate = new Climate(scene, { lighting: this.lighting });
+    this.water.applyTo(this.collision);
+    this.landmarks = new Landmarks(scene, this.collision);
+    this.backdrop = new Backdrop(scene);
 
     // Grafo de navegação depois de TODOS os sólidos estarem no mundo
     this.nav = new NavGrid(this.collision);
+
+    // Reflexo do céu nos materiais PBR + exposição casada com o Sky
+    this.lighting.applyEnvironment(scene);
+    this.lighting.applyExposure(this.renderer.renderer);
 
     this.player = new Player(camera, this.terrain, this.collision);
     this.player.fov = Config.BASE_FOV;
@@ -132,6 +162,18 @@ export class Engine {
     });
     this.player.onDamaged = (amount) => { this._pendingDamage = amount; };
     this.player.onDeath = () => this._reportAlive();
+
+    // --- zona segura (Fase 6): dano por tick + feedback no feed ---------
+    this.zone = new Zone(scene, {
+      onCloseStart: (next, idx) => this._feedKill(`<b>ZONA FECHANDO</b> · fase ${idx} → ${Math.round(next.radius)} m`, ''),
+      onPhase: (idx, state) => {
+        // Fase final: o céu vira gás (Climate) — feedback no mundo, não só no HUD
+        this.climate.onZonePhase(idx, state === 'FINAL');
+        if (state === 'FINAL') this._feedKill('<b>ZONA FINAL</b> · gás subindo', '');
+      },
+    });
+
+    this.minimap = new Minimap(document.getElementById('minimap-canvas'));
 
     this.sceneManager.setScene(scene, camera);
     this._lobbyCamTarget = new THREE.Vector3(0, 2, 0);
@@ -200,12 +242,17 @@ export class Engine {
     this.viewmodel.reset?.();
     this.hud.clearFeed();
 
+    this.climate?.set(CLIMATE.CLEAR, { instant: true });
+    this.zone.reset(this.player.position.x, this.player.position.z);
     const allies = settings.mode === 'duo' ? 1 : 0;
+    // spawn distribuído nos POIs (cidade + depósito + fazenda + antenas + lago)
+    const spots = [...(this.buildings.spawnPoints() || []), ...(this.landmarks.spawnPoints || [])];
     const level = Config.BOT_LEVELS[settings.difficulty] ?? Config.BOT_LEVELS.normal;
     const spawned = this.bots.spawn(settings.bots, {
       playerPos: this.player.position,
       allies,
       level,
+      spots,
     });
     this.gameState.totalCombatants = spawned + 1;
     this.aliveCount = spawned + 1;
@@ -214,6 +261,7 @@ export class Engine {
 
   _toLobby() {
     this.input.setEnabled(false);
+    this.zone?.disable();
     this.bots?.despawn();
     this.hud.clearFeed();
     if (this.lobby) this.lobby.show();
@@ -257,7 +305,8 @@ export class Engine {
    */
   _onBotKilled(info) {
     if (info.attackerName) {
-      this._feedKill(`${info.attackerName} eliminou ${info.name}`, info.part === 'head' ? 'HEADSHOT' : '');
+      const how = info.zone ? '🔥 NO GÁS' : info.part === 'head' ? 'HEADSHOT' : '';
+      this._feedKill(`${info.attackerName} eliminou ${info.name}`, how);
     }
     this._reportAlive();
   }
@@ -276,6 +325,19 @@ export class Engine {
     this.gameState.update(dt);
     const phase = this.gameState.phase;
     const camera = this.sceneManager.camera;
+
+    // céu/água vivem fora do MATCH também (o Lobby é a vitrine do mapa)
+    this.lighting.update(dt);
+    this.water.update(dt);
+    this.climate.update(dt);
+    // transição de clima em curso → re-lerp das cores do Backdrop (4 Hz)
+    if (this.climate.blend < 1) {
+      this._climateTintAt = (this._climateTintAt || 0) + dt;
+      if (this._climateTintAt > 0.25) {
+        this._climateTintAt = 0;
+        if (this.sceneManager.scene?.fog) this.backdrop.refreshTint(this.sceneManager.scene.fog.color);
+      }
+    }
 
     if (phase === PHASE.LOBBY || phase === PHASE.RESULT) {
       this._updateLobbyCamera(dt, camera);
@@ -323,8 +385,22 @@ export class Engine {
       lookY: look.y,
     });
 
-    // --- Bots: decisão em lote + integração de todos ---
-    this.bots.update(dt, { player: this.player });
+    // --- Zona: fecha, marca o tick e fere quem está fora ---
+    let zoneTick = false;
+    if (phase === PHASE.MATCH && this.zone.enabled) {
+      this.zone.update(dt);
+      zoneTick = this.zone.shouldTick(dt);
+      if (zoneTick && this.player.alive) {
+        const dps = this.zone.dpsAt(this.player.position.x, this.player.position.z);
+        if (dps > 0) this.player.takeDamage(dps, 'zone');
+      }
+    }
+
+    // --- Bots: decisão em lote + integração de todos (correm p/ a zona) ---
+    this.bots.update(dt, { player: this.player, zone: this.zone, zoneTick });
+
+    // --- minimapa (12 Hz, canvas 2D) ---
+    this.minimap.update(dt, { player: this.player, zone: this.zone, bots: this.bots });
 
     // --- Sombra segue o jogador (materials-lighting skill) ---
     if (Config.SHADOW_FOLLOW_PLAYER) {
@@ -351,10 +427,28 @@ export class Engine {
       },
       hit: this._pendingHit,
       damage: this._pendingDamage,
+      zone: this._zoneHud(phase),
       now: this._time,
     });
     this._pendingHit = null;
     this._pendingDamage = 0;
+  }
+
+  /** Objeto de leitura da zona p/ o HUD (HUD não conhece a Zone, só dados). */
+  _zoneHud(phase) {
+    const z = this.zone;
+    if (!z || !z.enabled || phase !== PHASE.MATCH) return null;
+    const p = this.player.position;
+    return {
+      label: z.label,
+      countdown: z.getCountdownText(),
+      distance: Math.max(0, z.distanceOutside(p.x, p.z)),
+      outside: z.isOutside(p.x, p.z),
+      closing: z.state === 'CLOSING',
+      // barra = quanto do estado ATUAL já passou (espera ou fechamento). Ler
+      // `z.progress` fora do CLOSING dava 1 o tempo todo e a barra ficava morta.
+      progress: z.phaseProgress,
+    };
   }
 
   /** Câmera do Lobby: órbita lenta sobre a cidade (a cena é o fundo do menu). */
@@ -376,6 +470,12 @@ export class Engine {
   dispose() {
     this.loop.stop();
     this.immersive.dispose();
+    if (this.minimap) this.minimap.dispose?.();
+    if (this.climate) this.climate.dispose();
+    if (this.zone) this.zone.dispose();
+    if (this.backdrop) this.backdrop.dispose();
+    if (this.water) this.water.dispose();
+    if (this.landmarks) this.landmarks.dispose();
     if (this.bots) this.bots.dispose();
     if (this.viewmodel) this.viewmodel.dispose();
     if (this.buildings) this.buildings.dispose();

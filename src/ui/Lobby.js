@@ -1,4 +1,5 @@
 import { Config } from '../core/Config.js';
+import { Minimap } from './Minimap.js';
 
 /**
  * Lobby.js — Tela de entrada antes da partida (regra do pedido: o jogo NÃO
@@ -41,12 +42,38 @@ export class Lobby {
     this.diffBtns = [...document.querySelectorAll('#lobby-diff button')];
     this.statusEl = document.getElementById('lobby-status');
     this.infoEl = document.getElementById('lobby-info');
+    this.mapCanvas = document.getElementById('lobby-map-canvas');
+    this.mapEl = document.getElementById('lobby-map');
+    this.mapMeta = document.querySelector('#lobby-map .map-meta');
 
     this.selection = { quality: 'auto', mode: 'solo', bots: Config.LOBBY_BOT_PRESETS[2], difficulty: 'normal' };
     this._load();
     this._bind();
     this._sync();
     this.applyQuality();
+    this._paintMapPreview();
+  }
+
+  /**
+   * Preview estático da arena no canto do Lobby — a resposta direta a
+   * "só tem uma cidade cercada de árvore": o jogador VÊ os 5 POIs, as
+   * estradas e o lago ANTES do deploy. 1 paint, zero custo por frame.
+   */
+  _paintMapPreview() {
+    const canvas = this.mapCanvas;
+    if (!canvas || !canvas.getContext) return;
+    const size = 132;
+    const dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
+    canvas.width = Math.round(size * dpr);
+    canvas.height = Math.round(size * dpr);
+    try {
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      Minimap.drawBaseMap(ctx, size, { frame: true });
+    } catch {
+      if (this.mapEl && this.mapEl.parentNode) this.mapEl.remove(); // sem canvas 2D: some o bloco
+      this.mapCanvas = null;
+    }
   }
 
   _load() {
@@ -198,6 +225,9 @@ export class Lobby {
       const label = { solo: 'SOLO', duo: 'DUO' }[this.selection.mode];
       const bots = this.selection.bots === 0 ? 'sem bots (treino)' : `${this.selection.bots} bots`;
       this.infoEl.textContent = `${label} · ${bots} · dificuldade ${this.selection.difficulty}`;
+    }
+    if (this.mapMeta) {
+      this.mapMeta.innerHTML = `<b>ARENA 01</b>400 m · 5 POIs · ${this.selection.bots} bots`;
     }
   }
 

@@ -62,20 +62,67 @@ export const Config = Object.freeze({
   ANTIALIAS: true,
 
   // --- Iluminação (materials-lighting skill: luz fisicamente correta desde r155) ---
-  SUN_INTENSITY: 2.7, // key ≈ 2–3
-  SUN_COLOR: 0xfff1dc,
-  SUN_POSITION: [70, 95, 35],
-  HEMI_SKY: 0xbfd9ff,
-  HEMI_GROUND: 0x4a5f3a,
-  HEMI_INTENSITY: 0.95, // fill de céu/chão
-  TONE_MAPPING_EXPOSURE: 1.0,
-  FOG_COLOR: 0xa8cfe8,
+  SUN_INTENSITY: 2.45, // key ≈ 2–3 (r155+); a direção vem de SUN_ELEVATION/AZIMUTH
+  SUN_COLOR: 0xffe6c2, // quente p/ bater com o golden hour do Sky
+  SUN_POSITION: [70, 95, 35], // sobrescrito pelo Lighting a partir do Sky
+  HEMI_SKY: 0x9fc2e8,
+  HEMI_GROUND: 0x54613c,
+  HEMI_INTENSITY: 0.62, // fill menor: o environment do Sky já ilumina o chão
+  TONE_MAPPING_EXPOSURE: 0.86,
+  // FOG = cor do horizonte do céu → nenhuma "emenda" no fim do terreno
+  FOG_COLOR: 0xd8cbb6,
+  FOG_HEIGHT_SCALE: 0.45, // fog exponencial suave p/ as montanhas ficarem azuis
 
   // --- Mundo ---
   WORLD_SIZE: 400,
-  TERRAIN_SEGMENTS: 128,
-  FOG_NEAR: 70,
-  FOG_FAR: 240,
+  TERRAIN_SEGMENTS: 160, // 2,5 m por quad: colina lisa de perto, 51 k tris (176 = 62 k p/ nada)
+  FOG_NEAR: 82,
+  FOG_FAR: 268,
+
+  // --- Céu / sol (three/addons Sky = Preetham, sem baixar textura) ---
+  SUN_ELEVATION: 15.5, // graus — golden hour: sombras longas, cena quente
+  SUN_AZIMUTH: 128,
+  SKY_TURBIDITY: 7.4,
+  SKY_RAYLEIGH: 1.9,
+  SKY_MIE_COEFF: 0.0052,
+  SKY_MIE_G: 0.84,
+  ENV_INTENSITY: 0.75, // material.envMapIntensity (r160 não tem scene.environmentIntensity)
+  SKY_EXPOSURE: 0.86, // toneMappingExposure casado com o Sky
+  CLOUD_COVER: 0.42, // nuvens procedural no skydome (0 = céu limpo)
+  CLOUD_BRIGHTNESS: 1.0,
+
+  // --- Água / relevo ---
+  WATER_LEVEL: -2.35,
+  LAKE: { x: -118, z: 92, r: 46 }, // "Lago Zero"
+  BACKDROP_RADIUS: 268, // montanhas distantes (1 draw call, sem colisão)
+  FAR_GROUND_RADIUS: 920, // saia de chão até o horizonte (esconde o "limite")
+
+  // --- POIs (Fase 6/GDD §2: regiões nomeadas p/ rotação e centro da zona) ---
+  POIS: [
+    { id: 'cidade', name: 'CIDADE', x: 0, z: 0, r: 40, weight: 3.0 },
+    { id: 'lago', name: 'LAGO ZERO', x: -118, z: 92, r: 48, weight: 1.2 },
+    { id: 'deposito', name: 'DEPÓSITO', x: 126, z: -104, r: 40, weight: 2.2 },
+    { id: 'fazenda', name: 'FAZENDA', x: -124, z: -116, r: 38, weight: 1.6 },
+    { id: 'antenas', name: 'ANTENAS', x: 122, z: 118, r: 34, weight: 1.8 },
+  ],
+
+  // --- Zona segura / gás (Fase 6, GDD §2) ---
+  // raio alvo da fase; `wait` parado, `close` fechando; dps = dano por tick.
+  ZONE_PHASES: [
+    { radius: 205, wait: 20, close: 0, dps: 0 },   // círculo inicial cobre o mapa
+    { radius: 138, wait: 22, close: 26, dps: 1.2 },
+    { radius: 86, wait: 18, close: 22, dps: 2.4 },
+    { radius: 48, wait: 16, close: 18, dps: 4.5 },
+    { radius: 20, wait: 13, close: 15, dps: 8 },
+    { radius: 3, wait: 10, close: 14, dps: 14 },
+  ],
+  ZONE_TICK: 1.0, // 1 dano por segundo (dps já escala por fase)
+  ZONE_WALL_HEIGHT: 88,
+  ZONE_MIN_BREATH: 8, // 1ª espera mais longa: tempo de cair, achar arma e ler o mapa
+  ZONE_EDGE_FALLOFF: 0.06, // % do raio p/ suavizar a borda do dano
+  ZONE_CENTER_POI_PULL: 0.55, // 0 = centro aleatório, 1 = sempre num POI (anti-camping)
+  MINIMAP_SIZE: 140, // px do minimapa (12 Hz de redraw: layout é grátis)
+  MINIMAP_ENEMY_RADIUS: 78, // só mostra hostis dentro disso (nada de wallhack)
 
   // --- Jogador (protótipo FPS — Fase 3 vira 3ª pessoa) ---
   PLAYER_EYE_HEIGHT: 1.7,

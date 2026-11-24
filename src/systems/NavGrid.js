@@ -182,7 +182,21 @@ export class NavGrid {
       if (!this.isOpenWorld(px, pz)) continue;
       return { x: px, z: pz };
     }
-    const free = this.nearestFreeWorld(x, z, 4);
-    return free || { x, z };
+    // 12 amostras do anel pediram tudo: alargamos MUITO (beco entre prédios,
+    // canto de depósito). Se ainda assim não achar, devolvemos null — quem
+    // chama decide (o Bot passa a seguir a zona / o centro do mapa). Devolver
+    // {x,z} aqui era o bug: waypoint == posição → bot parado para sempre.
+    for (let tries = 0; tries < 10; tries++) {
+      const a = rng() * Math.PI * 2;
+      const d = 45 + rng() * 150;
+      const px = x + Math.cos(a) * d;
+      const pz = z + Math.sin(a) * d;
+      if (Math.abs(px) > this.half - 6 || Math.abs(pz) > this.half - 6) continue;
+      if (blocked && blocked(px, pz, Config.BOT_RADIUS)) continue;
+      if (!this.isOpenWorld(px, pz)) continue;
+      return { x: px, z: pz };
+    }
+    const free = this.nearestFreeWorld(x, z, 10);
+    return free || null;
   }
 }

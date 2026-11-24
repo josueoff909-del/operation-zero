@@ -18,7 +18,7 @@ export class SceneManager {
       75,
       window.innerWidth / window.innerHeight,
       0.1,
-      600, // longe o bastante p/ ver o mapa inteiro + céu
+      1250, // longe o bastante p/ o anel de montanhas distante (Backdrop)
     );
     camera.rotation.order = 'YXZ'; // Skill §3: Euler YXZ evita Gimbal Lock
     return camera;

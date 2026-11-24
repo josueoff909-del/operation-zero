@@ -729,6 +729,294 @@ await check('nenhum cache de elemento (this.*El/*Btn/*Fill) fica undefined na in
   assert.equal(problems.length, 0, problems.join('; '));
 });
 
+// 8. zona segura + minimapa no DOM (Fase 6 / 11)
+console.log('\n8. zona segura + minimapa no DOM');
+function fakeCtx() {
+  const log = { arcs: [], strokes: [], texts: [], styles: [], rects: [], fills: [] };
+  const ctx = {
+    log,
+    setTransform() {}, clearRect() {}, save() {}, restore() {},
+    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
+    fill(mode) { log.fills.push(mode || 'nonzero'); },
+    stroke() { log.strokes.push(ctx.strokeStyle); },
+    setLineDash(d) { if (d && d.length) log.dash = d; }, // só o trace "ligado" importa
+    fillRect(x, y, w, h) { log.rects.push([x, y, w, h, ctx.fillStyle]); },
+    rect(x, y, w, h) { log.rects.push([x, y, w, h, ctx.fillStyle]); },
+    strokeRect() {},
+    arc(x, y, r) { log.arcs.push([x, y, r, ctx.fillStyle, ctx.strokeStyle]); },
+    fillText(t) { log.texts.push(String(t)); },
+  };
+  // cores/medidas lidas via properties espelhadas no log
+  for (const k of ['fillStyle', 'strokeStyle', 'lineWidth', 'font', 'textAlign', 'globalAlpha']) {
+    let v = '';
+    Object.defineProperty(ctx, k, { get: () => v, set: (nv) => { v = nv; log.styles.push([k, nv]); } });
+  }
+  return ctx;
+}
+
+await check('HUD._updateZone: texto, barra, vinheta de gás e alarme', async () => {
+  const hud = new HUD();
+  const zoneState = byId.get('zone-state');
+  const zoneTime = byId.get('zone-time');
+  const zoneDist = byId.get('zone-dist');
+  const bar = byId.get('zone-bar');
+  const gas = byId.get('gas-vignette');
+  const alarm = byId.get('zone-alarm');
+  for (const [n, el] of Object.entries({ zoneState, zoneTime, zoneDist, bar, gas, alarm })) {
+    assert.ok(el, `#${n} não existe no HTML`);
+  }
+  hud.setMatchVisible(true);
+  hud._updateZone({ label: 'ZONA FECHANDO', countdown: '0:14', distance: 0, outside: false, closing: true, progress: 0.42 });
+  assert.equal(zoneState.textContent, 'ZONA FECHANDO');
+  assert.ok(zoneState.classList.contains('closing'), 'classe .closing não aplicada (CSS não pisca)');
+  assert.equal(zoneTime.textContent, 'FECHANDO 0:14');
+  assert.ok(/scaleX\(0\.42/.test(bar.style.transform), `barra: ${bar.style.transform}`);
+  assert.ok(!gas.classList.contains('on'), 'vinheta de gás acesa DENTRO da zona');
+  hud._updateZone({ label: 'ZONA FECHANDO', countdown: '0:07', distance: 38, outside: true, closing: true, progress: 0.9 });
+  assert.ok(gas.classList.contains('on'), 'vinheta de gás apagada FORA da zona');
+  assert.ok(alarm.classList.contains('on'), 'alarme de texto não apareceu');
+  assert.ok(zoneDist.classList.contains('danger'), 'distância não ficou vermelha');
+  assert.match(zoneDist.textContent, /FORA DA ZONA · 38 m/, zoneDist.textContent);
+  hud.setMatchVisible(false);
+  assert.ok(!gas.classList.contains('on'), 'sair da partida deixou a vinheta de gás acesa');
+});
+
+await check('Minimap desenha o mapa (POIs + lago + estradas) e o círculo da zona', async () => {
+  const { Minimap } = await import('../src/ui/Minimap.js');
+  const canvas = byId.get('minimap-canvas');
+  const ctx = fakeCtx();
+  canvas.getContext = () => ctx;
+  canvas.clientWidth = 140;
+  const mm = new Minimap(canvas);
+  const fakeZone = {
+    enabled: true, radius: 138, state: 'CLOSING',
+    center: { x: 10, y: -6 },
+    getNext: () => ({ x: 12, z: -8, r: 86, closing: true }),
+  };
+  const player = { position: { x: 0, y: 0, z: 0 }, team: 0, yaw: 0.4 };
+  const bots = { list: [] };
+  mm._accum = 1; // força o redraw (o throttle de 12 Hz é testado no outro check)
+  mm._draw({ player, zone: fakeZone, bots });
+  // 1 moldura? -> arcs: POIs(5) + lago(1) + jogador(1) + círculo(1) + próximo(1) = 9 no mínimo
+  assert.ok(ctx.log.arcs.length >= 9, `arcos desenhados: ${ctx.log.arcs.length}`);
+  assert.ok(ctx.log.styles.some(([k, v]) => k === 'strokeStyle' && v === '#ff7a5c'),
+    'fechando deveria pintar o círculo de laranja (leitura de perigo)');
+  assert.ok(ctx.log.fills.includes('evenodd'), 'área fora da zona não foi escurecida (evenodd)');
+  assert.ok(ctx.log.dash && ctx.log.dash.length === 2, 'próximo círculo não é tracejado');
+  const radii = ctx.log.arcs.map((a) => a[2]);
+  assert.ok(Math.max(...radii) > 20, `raio da zona fora de escala: ${Math.max(...radii)}`);
+  assert.ok(radii.every((r) => Number.isFinite(r) && r > 0), 'arco com raio inválido');
+});
+
+await check('Minimap respeita o throttle (12 Hz) e não desenha sem canvas', async () => {
+  const { Minimap } = await import('../src/ui/Minimap.js');
+  const canvas = byId.get('minimap-canvas');
+  const ctx = fakeCtx();
+  canvas.getContext = () => ctx;
+  const mm = new Minimap(canvas);
+  const before = ctx.log.arcs.length;
+  mm.update(1 / 60, { player: null, zone: null, bots: null });
+  assert.equal(ctx.log.arcs.length, before, 'redesenhou antes do intervalo de 1/12 s');
+  mm.update(0.2, { player: null, zone: null, bots: null });
+  assert.ok(ctx.log.arcs.length > before, 'não redesenhou depois de 0.2 s');
+  const bare = new Minimap(null); // sem canvas (SSR/teste): tem de ser no-op
+  bare.update(1, { player: null, zone: null, bots: null });
+  assert.ok(true);
+});
+
+await check('Lobby pinta o preview da arena (drawBaseMap) sem depender do Engine', async () => {
+  const { Minimap } = await import('../src/ui/Minimap.js');
+  const canvas = byId.get('lobby-map-canvas');
+  assert.ok(canvas, '#lobby-map-canvas não existe no index.html');
+  const ctx = fakeCtx();
+  canvas.getContext = () => ctx;
+  const lobby = new Lobby({ gameState: { setSettings() {}, startMatch() {} }, renderer: {}, performance: {}, immersive: {} });
+  lobby._paintMapPreview();
+  assert.ok(ctx.log.texts.some((t) => /CIDADE/.test(t)), `labels dos POIs ausentes: ${ctx.log.texts.join('|')}`);
+  assert.ok(ctx.log.arcs.length >= 6, 'preview sem POIs/lago');
+  // preview é 1 paint: nada de agendar loop
+  assert.equal(lobby._mapRaf, undefined, 'Lobby agendou loop de redraw no preview');
+  void Minimap;
+});
+
+await check('CSS: gás/minimapa/zona não roubam toque e têm contraste', async () => {
+  const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+  for (const sel of ['#gas-vignette', '#minimap', '#zone-hud', '#zone-alarm']) {
+    const i = css.indexOf(`${sel} {`);
+    assert.ok(i >= 0, `${sel} sem regra no CSS`);
+    const rule = css.slice(i, css.indexOf('}', i));
+    assert.match(rule, /pointer-events:\s*none/, `${sel} captura toque (mata o look/JOY)`);
+  }
+  const zg = css.indexOf('#gas-vignette {');
+  const zgm = css.slice(zg, zg + 500);
+  assert.match(zgm, /radial-gradient/, 'vinheta de gás sem gradiente (some no AMOLED)');
+  assert.match(css, /@keyframes gaspulse/, 'gás sem pulso: o jogador não percebe que está queimando');
+  assert.match(css, /@keyframes zoneblink/, 'contador de "FECHANDO" sem alerta piscante');
+  assert.match(css, /#minimap \{[\s\S]{0,400}z-index/, 'minimapa sem z-index próprio');
+  // o #zone-hud só aparece com o HUD de partida (nunca no lobby)
+  assert.match(css, /#hud-match\.show #zone-hud \{ opacity: 1/, 'HUD da zona visível no lobby');
+});
+
+await check('HUD da partida: zona + minimapa aparecem só no MATCH (idempotente)', async () => {
+  const hud = new HUD();
+  hud.setMatchVisible(true);
+  assert.ok(byId.get('minimap').classList.contains('show'), 'minimapa não apareceu no match');
+  hud.setMatchVisible(true);
+  assert.ok(byId.get('minimap').classList.contains('show'), 'duplo setMatchVisible quebrou o minimapa');
+  hud.setMatchVisible(false);
+  assert.ok(!byId.get('minimap').classList.contains('show'), 'minimapa ficou no lobby');
+});
+
+// 9. o jogo INTEIRO junto: mundo real + zona + HUD + minimapa por 900 frames
+console.log('\n9. simulação do jogo real (mundo novo + zona + gás)');
+await check('mundo completo roda 2:30 com zona fechando, sem NaN e com dano real', async () => {
+  const { Terrain } = await import('../src/world/Terrain.js');
+  const { Vegetation } = await import('../src/world/Vegetation.js');
+  const { Buildings } = await import('../src/world/Buildings.js');
+  const { Landmarks } = await import('../src/world/Landmarks.js');
+  const { Water } = await import('../src/world/Water.js');
+  const { Backdrop } = await import('../src/world/Backdrop.js');
+  const { NavGrid } = await import('../src/systems/NavGrid.js');
+  const { Bots } = await import('../src/systems/Bots.js');
+  const { Zone } = await import('../src/systems/Zone.js');
+  const { Climate } = await import('../src/world/Climate.js');
+  const { Minimap } = await import('../src/ui/Minimap.js');
+
+  const scene = new THREE.Scene();
+  const collision = new Collision();
+  const terrain = new Terrain();
+  const buildings = new Buildings(scene, collision, (x, z) => terrain.getHeightAt(x, z));
+  const vegetation = new Vegetation(scene);
+  vegetation.applyTo(collision);
+  const water = new Water(scene);
+  water.applyTo(collision);
+  const landmarks = new Landmarks(scene, collision, 4242);
+  const backdrop = new Backdrop(scene);
+  const nav = new NavGrid(collision);
+  const cam = new THREE.PerspectiveCamera(75, 2, 0.1, 1250);
+  const player = new Player(cam, terrain, collision);
+  player.spawnAt ? player.spawnAt(0, terrain.getHeightAt(0, 0), 0) : player.position.set(0, 0, 0);
+  const bots = new Bots(scene, { collision, terrain, nav, rngSeed: 999 });
+  const spots = [...buildings.spawnPoints(), ...landmarks.spawnPoints]
+    .filter((p) => nav.isOpenWorld(p.x, p.z) && !collision.isBlockedCircle(p.x, p.z, 0.75));
+  const spawned = bots.spawn(12, { playerPos: player.position, allies: 0, level: 0.5, spots });
+  assert.equal(spawned, 12, 'spawn com spots filtrados quebrou');
+
+  const zone = new Zone(scene, { rng: () => 0.37 });
+  zone.reset(player.position.x, player.position.z);
+  const climate = new Climate(scene, { lighting: null });
+  const canvas = byId.get('minimap-canvas');
+  canvas.getContext = () => fakeCtx();
+  canvas.clientWidth = 140;
+  const minimap = new Minimap(canvas);
+  const hud = new HUD();
+  hud.setMatchVisible(true);
+  const perf = { fps: 60, frameMs: 16, quality: 'ALTA' };
+  const render = { calls: 42, triangles: 104712 };
+
+  const startHealth = player.health ?? 100;
+  let zoneHurtPlayer = 0;
+  let minRadius = zone.radius;
+  const FRAMES = 60 * 150; // 2:30 de partida: 3 fases da zona completas
+  for (let f = 0; f < FRAMES; f++) {
+    const dt = 1 / 60;
+    zone.update(dt);
+    const tick = zone.shouldTick(dt);
+    if (tick) {
+      const dps = zone.dpsAt(player.position.x, player.position.z);
+      if (dps > 0) {
+        player.takeDamage(dps, 'zone');
+        zoneHurtPlayer += 1;
+      }
+    }
+    bots.update(dt, { player, zone, zoneTick: tick });
+    climate.update(dt);
+    minimap.update(dt, { player, zone, bots });
+    hud.update(dt, {
+      perf, render, player, combat,
+      match: { kills: 0, alive: bots.aliveCount + 1, total: 13, timeText: '0:15' },
+      zone: { label: zone.label, countdown: zone.getCountdownText(), distance: zone.distanceOutside(player.position.x, player.position.z), outside: zone.isOutside(player.position.x, player.position.z), closing: zone.state === 'CLOSING', progress: zone.progress },
+      hit: null, damage: null, now: f / 60,
+    });
+    minRadius = Math.min(minRadius, zone.radius);
+  }
+  // 1) o círculo fechou de verdade
+  assert.ok(minRadius <= Config.ZONE_PHASES[2].radius + 1, `zona não fechou (mín ${minRadius.toFixed(0)} m, esperado ≤ ${Config.ZONE_PHASES[2].radius})`);
+  // 2) o jogador a pé ~0 m do centro nunca deveria apanhar; e o gás feriu ALGUEM
+  //    (checa nos bots: eles nascem espalhados pelo mapa, então vários ficam fora)
+  let hurt = 0;
+  for (const b of bots.list) if (b.health < b.maxHealth) hurt += 1;
+  assert.ok(hurt > 0, `${Math.round(FRAMES / 60)} s de gás e nenhum bot foi ferido — dano da zona não está chegando`);
+  assert.ok(zoneHurtPlayer === 0, 'jogador no centro tomou dano dentro da zona');
+  assert.ok(player.health === startHealth, `vida do jogador mudou dentro da zona (${startHealth} → ${player.health})`);
+  // 3) nada virou NaN e ninguém atravessou nada
+  for (const b of bots.list) {
+    assert.ok(Number.isFinite(b.position.x) && Number.isFinite(b.position.y), `bot ${b.id} com NaN`);
+    assert.ok(Math.abs(b.position.x) < Config.WORLD_SIZE / 2 + 1, `bot ${b.id} saiu do mapa`);
+  }
+  for (const p of [player.position]) assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y), 'player com NaN');
+  // 4) o clima reagiu à zona final sem quebrar materiais
+  // (a fog é criada pelo Lighting no Engine; aqui pomos a mesma para valer)
+  scene.fog = new THREE.Fog(Config.FOG_COLOR, Config.FOG_NEAR, Config.FOG_FAR);
+  climate.onZonePhase(Config.ZONE_PHASES.length - 1, true);
+  for (let f = 0; f < 120; f++) climate.update(1 / 60);
+  climate.update(1 / 60);
+  backdrop.refreshTint(scene.fog.color);
+  if (scene.fog) {
+    assert.ok(Number.isFinite(scene.fog.far), 'fog.far virou NaN no clima de gás');
+    assert.ok(scene.fog.far < Config.FOG_FAR, 'gás não encurtou a névoa');
+    assert.ok(scene.fog.color.getHex() !== Config.FOG_COLOR, 'cor da névoa não mudou com o gás');
+  }
+  for (const m of backdrop.meshes) {
+    const attr = m.geometry.attributes.color;
+    for (let i = 0; i < attr.count; i += 37) {
+      assert.ok(Number.isFinite(attr.getX(i)) && Number.isFinite(attr.getZ(i)), `${m.name} com cor NaN`);
+    }
+  }
+  // 5) o HUD mostrou a zona (o teste de "ficou bonito" que dá para automatizar)
+  assert.match(byId.get('zone-state').textContent || '', /ZONA/, 'HUD da zona vazio durante o match');
+  assert.ok(bots.aliveCount > 0, `todos os bots morreram em ${Math.round(FRAMES / 60)} s (dano do gás desregulado)`);
+  zone.dispose();
+  climate.dispose();
+  water.dispose();
+  landmarks.dispose();
+  backdrop.dispose();
+  void vegetation;
+});
+
+await check('todo módulo novo é montado pelo Engine na ordem certa', async () => {
+  const engine = readFileSync(join(ROOT, 'src/core/Engine.js'), 'utf8');
+  const need = ['new Terrain(', 'new Lighting(', 'new Buildings(', 'new Vegetation(', 'new Water(',
+    'new Landmarks(', 'new Backdrop(', 'new NavGrid(', 'new Player(', 'new Combat(', 'new Zone(',
+    'new Bots(', 'new Climate(', 'new Minimap(', 'new HUD('];
+  for (const n of need) assert.ok(engine.includes(n), `Engine não monta ${n}`);
+  // nada de módulo órfão em src/world + src/systems
+  // módulos de mundo/sistema que existem mas o Engine nunca monta = código morto.
+  // A UI é montada por dentro de outra UI (Joystick/TouchLook/Settings) e os
+  // STUBs de fases futuras são documentados de propósito — nem um nem outro contam.
+  const { readdirSync } = await import('node:fs');
+  const stubs = new Set();
+  for (const dir of ['src/world', 'src/systems']) {
+    for (const f of readdirSync(join(ROOT, dir))) {
+      if (!f.endsWith('.js')) continue;
+      if (/STUB \(Fase/.test(readFileSync(join(ROOT, dir, f), 'utf8'))) stubs.add(`${dir}/${f}`);
+    }
+  }
+  const orphans = [];
+  for (const dir of ['src/world', 'src/systems']) {
+    for (const f of readdirSync(join(ROOT, dir))) {
+      if (!f.endsWith('.js')) continue;
+      if (stubs.has(`${dir}/${f}`)) continue;
+      const mod = f.replace(/\.js$/, '');
+      if (!new RegExp(`${mod}\.js'`).test(engine)) orphans.push(`${dir}/${f}`);
+    }
+  }
+  assert.equal(orphans.length, 0, `módulos nunca importados pelo Engine: ${orphans.join(', ')}`);
+  // a zona implementada (systems/Zone.js) substituiu os stubs Zones/SafeZone
+  assert.ok(!readdirSync(join(ROOT, 'src/world')).includes('Zones.js'), 'ainda existe o Zones.js stub');
+  assert.ok(!readdirSync(join(ROOT, 'src/systems')).includes('SafeZone.js'), 'ainda existe o SafeZone.js stub');
+});
+
 console.log('\n────────────────────────────────────────');
 console.log(`  ${passed} checks ok, ${fails.length} falhas`);
 if (fails.length) {

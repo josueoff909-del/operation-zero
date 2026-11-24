@@ -287,6 +287,68 @@ export class Collision {
 
   /** true se (x,z) com raio `r` tem algo que BLOQUEIA (spawn/waypoint válido).
    * Volumetria baixa (meio-fio, calçada, crate de 0.2m) não conta: pisa-se em cima. */
+  /**
+   * Vetor p/ SAIR do bolso de colisão em (x,z): soma das normais de cada
+   * sólido que intersecta o círculo, ponderada pela penetração. Usado pelo
+   * Bot quando o NavGrid não acha célula livre ao redor (canto de prédio /
+   * beco do subúrbio) — sem isso o bot "patina" parado e parece burro.
+   * @returns {{x:number,z:number,pen:number}|null} null quando já está livre
+   */
+  escapeVector(x, z, r, feetY = 0) {
+    const step = Config.COLLISION_STEP;
+    const cand = this._candidates(x, z, this._scratch());
+    let ex = 0;
+    let ez = 0;
+    let pen = 0;
+    for (const k of cand.boxes) {
+      const b = this.boxes[k];
+      if (b.maxY <= feetY + step) continue;
+      if (b.minY >= feetY + Config.PLAYER_HEIGHT) continue;
+      const cx = Math.max(b.minX, Math.min(b.maxX, x));
+      const cz = Math.max(b.minZ, Math.min(b.maxZ, z));
+      const dx = x - cx;
+      const dz = z - cz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= r * r) continue;
+      const d = Math.sqrt(d2);
+      if (d < 1e-4) {
+        // centro dentro da caixa: empurra p/ a face mais próxima
+        const toLeft = Math.abs(x - b.minX);
+        const toRight = Math.abs(b.maxX - x);
+        const toNear = Math.abs(z - b.minZ);
+        const toFar = Math.abs(b.maxZ - z);
+        const m = Math.min(toLeft, toRight, toNear, toFar);
+        if (m === toLeft) ex -= toLeft + r;
+        else if (m === toRight) ex += toRight + r;
+        else if (m === toNear) ez -= toNear + r;
+        else ez += toFar + r;
+        pen = Math.max(pen, r);
+        continue;
+      }
+      const p = r - d;
+      ex += (dx / d) * p;
+      ez += (dz / d) * p;
+      pen = Math.max(pen, p);
+    }
+    for (const k of cand.circles) {
+      const c = this.circles[k];
+      if (c.maxY <= feetY + step || c.minY >= feetY + Config.PLAYER_HEIGHT) continue;
+      if (c.walkable === false && c.block !== false) { /* sólido: conta */ }
+      const dx = x - c.cx;
+      const dz = z - c.cz;
+      const rr = r + c.r;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= rr * rr) continue;
+      const d = Math.max(1e-4, Math.sqrt(d2));
+      const p = rr - d;
+      ex += (dx / d) * p;
+      ez += (dz / d) * p;
+      pen = Math.max(pen, p);
+    }
+    if (pen <= 1e-4) return null;
+    return { x: ex, z: ez, pen };
+  }
+
   isBlockedCircle(x, z, r, feetY = 0) {
     const step = Config.COLLISION_STEP;
     const cand = this._candidates(x, z, this._scratch());

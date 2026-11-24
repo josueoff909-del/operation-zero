@@ -8,7 +8,9 @@ import { Config } from '../core/Config.js';
  * corrida, inclinação ao correr, sway do olhar, coice do tiro e
  * transição hip-fire → ADS (mira no centro + FOV reduzido no Player).
  * O tiro é VISUAL nesta fase (flash + tracer + coice); dano/balística
- * real é da Fase 4 (Combat). `onFire` avisa o Engine a cada disparo.
+ * real é da Fase 4 (Combat) — o Engine chama `playShot(impactDist)` a cada
+ * disparo confirmado (via `Combat.onShot`), então o coice/flash/tracer estão
+ * sempre sincronizados com a cadência verdadeira da arma.
  */
 export class Viewmodel {
   constructor(camera, scene) {

@@ -4,9 +4,11 @@
 > Base: `GDD_MASTER.md` (Seção 22 — Primeira Ação) + skill
 > `.agents/skills/threejs-android/SKILL.md`.
 
-**Status geral:** ✅ Fases 1–2 · 🟡 Fases 4, 8, 9 e 11 em andamento (combate real,
-Lobby, bots hostis e HUD de partida) — entregues por pedido explícito do lead.
-**Última atualização:** 2026-11-24 (cross-phase: Lobby + imersão + colisão sólida + bots).
+**Status geral:** ✅ Fases 1–2, 6 · 🟡 Fases 4, 8, 9 e 11 em andamento (combate real,
+Lobby, bots hostis, zona segura + gás, minimapa e HUD de partida) — entregues por
+pedido explícito do lead.
+**Última atualização:** 2026-11-24 (cross-phase: escala do mapa + céu/atmosfera +
+zona que encolhe com dano + minimapa + Lobby).
 
 ## Mapa das 14 fases
 
@@ -17,12 +19,12 @@ Lobby, bots hostis e HUD de partida) — entregues por pedido explícito do lead
 | 3 | Jogador em 3ª pessoa + física | Over-the-shoulder, colisão de câmera, agachar/deitar, pulo, escalada | ⚪ Não iniciada |
 | 4 | Combate, armas e balística | AR/SMG/SG/SR/pistola, falloff, recuo, spread, hitboxes, hitmarkers | 🟡 Parcial (4 armas, cadência, spread, recuo, hitbox por parte, hitmarker — sem loot/munição compartilhada) |
 | 5 | Inventário, loot, cura e habilidades | Loot/airdrops, munição, coletes, cura com canalização, habilidades | ⚪ Não iniciada |
-| 6 | Zona segura / gás | Múltiplas fases, centro semi-ponderado, dano por tick, feedback | ⚪ Não iniciada |
+| 6 | Zona segura / gás | Múltiplas fases, centro semi-ponderado, dano por tick, feedback | ✅ Concluída (Fase 6: `src/systems/Zone.js` — 6 fases, anti-camping, tick de 1 s no jogador E nos bots, parede + anel + HUD + minimapa) |
 | 7 | Veículos terrestres | Carro/moto/jipe: dirigir, colisão, atropelamento, destruição | ⚪ Não iniciada |
 | 8 | Fluxo da partida | Lobby → avião → paraquedas → pouso → rotação → Booyah | 🟡 Parcial (Lobby + DEPLOY + resultado/Booyah; avião/paraquedas pendentes) |
-| 9 | Bots IA (44) + balanceamento | FSM, navegação, loot, combate, dificuldade, pacing | 🟡 Parcial (FSM + A* + lote + tiro com capa; loot/pacing pendentes) |
+| 9 | Bots IA (44) + balanceamento | FSM, navegação, loot, combate, dificuldade, pacing | 🟡 Parcial (FSM + A* + lote + tiro com capa + **rotação sob a zona** + desempacotar; loot/pacing pendentes) |
 | 10 | Multiplayer (rede) | Cliente-servidor, predição/reconciliação, interpolação, compressão | ⚪ Não iniciada |
-| 11 | UI/UX completa | HUD, minimapa, lobby, configurações, SaveSystem | 🟡 Parcial (HUD de partida + Lobby + configs persistidas; minimapa/SaveSystem pendentes) |
+| 11 | UI/UX completa | HUD, minimapa, lobby, configurações, SaveSystem | 🟡 Parcial (HUD de partida + **minimapa tático** + Lobby com preview da arena + configs persistidas; SaveSystem pendente) |
 | 12 | Áudio posicional 3D | Passos, tiros direcionais, veículos, alertas de zona | ⚪ Não iniciada |
 | 13 | Otimização mobile extrema | LOD, oclusão, pooling, testes em Android real, bateria/temperatura | ⚪ Não iniciada |
 | 14 | Polimento, QA e release | Balanceamento final, QA, build release, publicação | ⚪ Não iniciada |
@@ -188,12 +190,152 @@ reescrever o núcleo das Fases 1–2.
   apache/incubator… (awesome-gamedev-agent-skills), sem diff neste PR.
 
 ### Pendências honestas
-- Avião/paraquedas/pouso (Fase 8 real), loot/colete/cura (Fase 5), zona (6),
-  minimapa (11) e áudio (12). A qualidade manual do Lobby agora desliga o
+- Avião/paraquedas/pouso (Fase 8 real), loot/colete/cura (Fase 5) e áudio (12).
+  (Zona — Fase 6 — e minimapa — Fase 11 — saíram desta lista no ciclo seguinte;
+  ver a seção "Cross-phase — escala do mapa, céu, zona e minimapa".) A qualidade manual do Lobby agora desliga o
   adaptativo (`performance.setAuto(false)`) e re-aplica as sombras via callback
   `onQuality` do Engine — nenhum módulo de UI escreve no renderer por fora.
 - Nada foi testado em aparelho real: os números acima vêm do harness headless
   (lógica + draw calls teóricos), não de um Snapdragon.
+
+## Cross-phase — escala do mapa, céu, zona e minimapa (2026-11-24)
+
+Pedido do lead: *"tá cheio de bug gráficos, o lobby tá feio, só tem uma cidade
+pequena cercada de árvore com um limite duro, e falta a zona que encolhe e dá
+dano fora"*. Cada item abaixo é uma resposta direta, com o arquivo onde mora.
+
+### 1 · Mapa: 5 POIs, estradas e um lago (não "uma cidade + mato")
+- [x] `Config.POIS` — cidade (0,0), **Lago Zero**, **Depósito**, **Fazenda** e
+  **Antenas**, cada um com raio e `weight` (peso usado no sorteio da zona).
+- [x] `utils/Noise.terrainHeight` agora é **o mapa como dado puro**: achanca o
+  plateau de cada POI, nivela as estradas e cava a bacia do lago. Mesh,
+  colisão, spawns e minimapa leem a MESMA função (nunca duas verdades).
+- [x] `roadAmount` liga a **borda** de cada POI (centro→centro deixava a praça
+  da cidade com chão de terra — bug pego pelo teste, não pelo build).
+- [x] `world/Landmarks.js` — DEPÓSITO (armazém + containers + caminhões),
+  FAZENDA (celeiro/silo/cercas), ANTENAS (torres + cabos), orla do LAGO
+  (píeres/barco/quebra-ondas) e SUBÚRBIO (4 filas de casas) montados como
+  blocos → **7 `InstancedMesh`** (466 instâncias) + 409 AABB + 11 círculos de
+  colisão, 43 spawns validados no grafo.
+- [x] `world/Water.js` — lago com `onBeforeCompile` (ondas + cor por
+  profundidade + espuma na margem), pisável na beira e **bloqueado no fundo**
+  (colisor `walkable:false`).
+- [x] `world/Backdrop.js` — anel de chão até 920 m amostrando o mesmo heightmap
+  + 3 cortinas de silhueta (mata/montanha perto/montanha longe) com cor
+  **lerpada à cor da névoa** e `fog:false`: o "limite" some, e o fundo casa com
+  o clima (re-lerp a 4 Hz durante transição, `refreshTint`).
+- [x] `world/Vegetation.js` — sorteio com rejeição também de **estrada, água,
+  margem alagada e plateau de POI**: 0 árvores em cima de via ou no lago.
+
+### 2 · Céu, atmosfera e fim dos "bugs gráficos"
+- [x] `world/Lighting.js` reescrito: `three/addons/objects/Sky` (Preetham) +
+  dome de nuvens fbm em shader + sol posicionado **pela direção do céu** (antes
+  a luz vinha de outro ângulo do que o brilho do horizonte) + sombra que segue
+  o jogador com `bias/normalBias` calibrados.
+- [x] `PMREMGenerator.fromScene` → `scene.environment`, aplicado por traversal
+  (`applyEnvironment`) porque o r160 **não** tem `scene.environmentIntensity`;
+  dentro de `try/catch` para continuar bootando sem WebGL.
+- [x] `FOG_COLOR === cor do horizonte do Sky` e `EXPOSURE` única (0,86) para
+  renderer e céu — sem emenda horizonte/névoa e sem o duplo escurecimento que
+  fazia tudo parecer preto.
+- [x] `Terrain` sem jitter por índice (as "bandas" visíveis): cor vem de
+  `groundTint` (grama → seca → areia → rocha → terra da estrada) + rampa de
+  rocha por **inclinação** + grão em canvas (`makeGroundDetail`, zero download).
+- [x] `SceneManager` `far` 600 → **1250 m** (senão a montanha distante era
+  cortada pelo frustum).
+- [x] `Climate.js` deixou de ser stub: `CLEAR / OVERCAST / GAZ` interpolando
+  fog, hemisfério, exposição, cor do sol e cobertura de nuvens. A zona final
+  acende o **GAZ** — o feedback é no mundo, não só no HUD.
+- [x] Orçamento: `TERRAIN_SEGMENTS` 176 → 160 e água 72×72 → 48×48 →
+  **42 draw calls / ~94k tris** (era 121k com o novo mapa) — a perda era só
+  triângulo de longe.
+
+### 3 · Fase 6 — zona segura que encolhe e queima
+- [x] `Config.ZONE_PHASES` (6 fases `{radius, wait, close, dps}`): 205 → 3 m,
+  dano 1,2 → 14 de vida/s, mais `ZONE_MIN_BREATH` = 8 s de respiro antes do
+  primeiro fechamento (Fase 5 ainda não existe; sem arma o gás seria só morte).
+- [x] `systems/Zone.js`: centro do novo círculo **semi-ponderado por POI +
+  ruído** (GDD l.15 anti-camping) e **sempre contido** no círculo atual
+  (`d ≤ R − r`) — testado em 400 seeds × partida inteira, 0 saltos ilegais.
+- [x] Dano por **tick** de 1 s (`ZONE_TICK`) com rampa de tolerância na borda
+  (`ZONE_EDGE_FALLOFF`), aplicado pelo Engine no jogador **e** pelo mesmo
+  `zoneTick` nos bots. Durante o FECHAMENTO já vale o dps da fase de destino.
+- [x] Visual: parede em `CylinderGeometry` com fresnel + listras (vermelha
+  enquanto fecha) e o **próximo círculo** em `depthTest:false` (holograma: sem
+  o anel sumindo atrás de cada colina). 2 draw calls, zero textura.
+- [x] HUD: `#zone-hud` (estado/contador/distância/barra), `#gas-vignette`
+  pulsando e `#zone-alarm`; o kill feed avisa FECHANDO/FINAL e marca
+  `🔥 NO GÁS` no abate pelo zone.
+- [x] Bots: fora do círculo o **único** objetivo é entrar (rotação com offset
+  próprio, rajada cancelada), e o gás fere e mata → a partida termina.
+
+### 4 · Lobby e minimapa (Fase 11)
+- [x] `ui/Minimap.js` — canvas 2D a **12 Hz** com mapa, estradas, POIs, lago,
+  área fora da zona escurecida (`evenodd`), círculo atual, próximo tracejado,
+  hostis só dentro de `MINIMAP_ENEMY_RADIUS` (78 m — sem wallhack) e o cone de
+  visão do jogador.
+- [x] Lobby: badge "SERVIDOR ONLINE", kicker, régua de destaque, chips de
+  escopo (5 POIs / 6 fases / 44 bots / 60 FPS), **preview estático da arena**
+  (`Minimap.drawBaseMap` — 1 paint, sem depender do Engine) e botão
+  `▶ DEPLOY` com brilho; o `#lobby::before` é um véu tático em gradiente — sem
+  o "formulário cinza sobre cinza" de antes.
+
+### Verificação deste ciclo
+- [x] `npm run test` → **50 checks ok** (eram 32): +8 de mapa (POIs, plateau,
+  estradas, lago/margem, Landmarks sem NaN e com spawns secos, vegetação
+  respeitando via/água, terreno sem streak, céu/PMREM/Backdrop) e +10 de zona
+  (6 fases monotônicas, simulação de 5 min fechando até a FINAL, 400 seeds de
+  "centro cabe no círculo", rampa de dano, tick compartilhado, bots fugindo do
+  gás, parede/anel, fiação do Engine, ordem colisão→nav).
+- [x] `npm run test:ui` → **34 checks ok** (eram 26): `_updateZone` no DOM real,
+  minimapa desenhando círculo/trace/`evenodd` com um mock de ctx, throttle 12 Hz
+  e no-op sem canvas, preview do Lobby, CSS (gás/minimapa/zona com
+  `pointer-events:none`, keyframes de pulso, HUD da zona só no MATCH) e
+  **uma simulação de 2:30 do mundo inteiro** com zona fechando: dano chegou aos
+  bots, `NaN` em nenhum lugar, `fog` encurtou com o gás e ninguém atravessou.
+- [x] `npm run bench` → 42 draw calls, 93.960 tris, 26 `InstancedMesh`, 3 luzes;
+  lógica 0,093 ms/frame (0 bots) → 0,273 ms (44 bots); A* 0,55 ms.
+- [x] `npm run lint` → 0 erros (5 avisos de variáveis só-de-leitura nos harness);
+  `npm run build` ok; todos os módulos novos servidos pelo dev server sem erro
+  de transform.
+- [!] **Nada foi medido em aparelho real.** Sem WebGL headless, o que foi
+  validado aqui é geometria, grafo, GPU budget teórico, matemática da zona e
+  DOM — não FPS de Snapdragon, nem como o `Sky`+PMREM+nuvens caem no olho.
+  Isso precisa de um teste manual no celular (ver "Como testar" abaixo).
+
+### Como testar o ciclo (visual e zona)
+1. `npm run dev` e abrir o preview. **Lobby**: conferir céu com nuvens, lago à
+   esquerda, 5 POIs legíveis, preview do mapa no canto e o `▶ DEPLOY`.
+2. TOCAR/CLICAR em DEPLOY → tela cheia + paisagem; rodar ~30 s e olhar o
+   `#zone-hud`: `ZONA SEGURA · PRÓXIMA 0:xx`, depois `ZONA FECHANDO` (parede
+   vermelha piscando, contador correndo, barra encolhendo).
+3. Sair do círculo (correr para fora enquanto fecha): vinheta laranja pulsando,
+   alarme `⚠ FORA DA ZONA`, vida caindo ~1 tick/s e o **minimapa** com a área
+   externa escurecida e o próximo círculo tracejado.
+4. Deixar correr até a fase FINAL: céu vira **gás** (laranja, névoa curta),
+   o feed avisa `ZONA FINAL · gás subindo`, e os bots fora do círculo correm
+   para dentro em vez de atirar em parede.
+5. Andar pelas estradas: nenhuma árvore no meio da via, nenhuma dentro do lago,
+   chão de terra batida contínuo cidade↔depósito↔fazenda↔antenas.
+6. Girar a câmera 360°: não existe borda dura do mundo — o relevo continua até
+   a silhueta de montanha (a névoa e a cor casam com o horizonte).
+
+### Pendências que este ciclo NÃO esconde
+- Loot/inventário/cura (Fase 5) seguem fora: por isso a 1ª zona tem dano 0 e o
+  dano só cresce a partir da fase 2. Sem colete, `dps 14` mata em ~7 s — é o
+  intenção do GDD, mas o balanceamento final depende da Fase 5.
+- `saveSystem` (Fase 11) e áudio (Fase 12) continuam stubs declarados.
+- O `escapeVector`/desempacotar dos bots resolve o "bot parado empurrando
+  parede" (uma janela de 2 s é o tempo de detecção; a janela seguinte já tem
+  pulo ou realocação), mas é remendo de IA — o certo seria o NavGrid marcar
+  células de tamanho insuficiente como bloqueadas na origem.
+- `WORLD_SIZE` continua 400 m (o mapa *parece* maior por causa do Backdrop e
+  dos 5 POIs). Ampliar de verdade exige revisar `NavGrid` (100×100 células já
+  custa 0,55 ms no A*) e o orçamento de tris.
+- Texturas são procedurais (canvas 128 px para o grão do solo). Nada foi
+  baixado da internet — o pedido de "baixar coisas" foi lido como autorização
+  de pesquisa, e a pesquisa apontou os addons do próprio `three` (Sky, PMREM)
+  como o caminho de maior ganho por MB em Android.
 
 ## Próximos passos (Fase 3 — NÃO iniciar sem concluir a Fase 2)
 
