@@ -4,10 +4,14 @@ import { Config } from './Config.js';
 
 /**
  * InputManager.js — Unifica teclado + mouse + touch (Skill §3).
- * - Desktop: WASD/setas, Shift correr, Espaço pular, mouse com Pointer Lock.
- * - Android: joystick flutuante (esquerda) + Touch Look (direita) + botões.
- * Multitouch simultâneo: andar + girar + pular/correr ao mesmo tempo.
- * Expõe: getMoveInput(), consumeLookDelta(), isJumpPressed(), isSprintHeld().
+ * - Desktop: WASD/setas, Shift correr, Espaço pular, C agachar,
+ *   mouse com Pointer Lock (botão esq. atira, dir. mira/ADS).
+ * - Android (paisagem): joystick flutuante (esquerda) + Touch Look
+ *   (direita) + botões ATIRAR/MIRAR/PULAR/CORRER/AGACHAR.
+ * Multitouch simultâneo: andar + girar + atirar/mirar/pular ao mesmo tempo.
+ * Sensibilidade ajustável via Settings (multiplicadores 0.5×–2.0×).
+ * Expõe: getMoveInput(), consumeLookDelta() (radianos), isJumpPressed(),
+ * isSprintHeld(), isFiring(), isAiming(), isCrouching().
  */
 export class InputManager {
   constructor(canvas) {
@@ -18,6 +22,11 @@ export class InputManager {
     this.jumpQueued = false; // pulo por "borda" (pressionou neste frame)
     this.sprintToggle = false; // botão CORRER alterna (mobile)
     this.sprintHeld = false; // Shift (desktop)
+    this.firing = false; // botão ATIRAR / botão esquerdo do mouse
+    this.aiming = false; // botão MIRAR / botão direito do mouse (ADS)
+    this.crouchToggle = false; // botão AGACHAR / tecla C (alterna)
+    this.sensMouse = 1; // multiplicador (Settings)
+    this.sensTouch = 1; // multiplicador (Settings)
 
     this.joystick = null;
     this.touchLook = null;
@@ -32,11 +41,22 @@ export class InputManager {
     this.touchLook = new TouchLook(lookZone);
   }
 
+  /** Multiplicadores de sensibilidade vindos do painel de Settings. */
+  setSensitivity(mouseMult, touchMult) {
+    this.sensMouse = mouseMult;
+    this.sensTouch = touchMult;
+  }
+
   _bindKeyboard() {
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
         if (!e.repeat) this.jumpQueued = true;
+      }
+      if (e.code === 'KeyC' && !e.repeat) {
+        this.crouchToggle = !this.crouchToggle;
+        const btn = document.getElementById('btn-crouch');
+        if (btn) btn.classList.toggle('active', this.crouchToggle);
       }
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.sprintHeld = true;
       this.keys.add(e.code);
@@ -58,19 +78,38 @@ export class InputManager {
     });
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = document.pointerLockElement === this.canvas;
+      // A dica de mouse só existe no desktop (nunca no mobile).
+      const fine = window.matchMedia('(pointer: fine)').matches;
       const hint = document.getElementById('lock-hint');
-      if (hint) hint.classList.toggle('hidden', this.pointerLocked);
+      if (hint) hint.classList.toggle('hidden', !fine || this.pointerLocked);
+      if (!this.pointerLocked) {
+        this.firing = false;
+        this.aiming = false;
+      }
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.pointerLocked) return;
       this.mouseDelta.x += e.movementX || 0;
       this.mouseDelta.y += e.movementY || 0;
     });
+    // Botões do mouse com Pointer Lock: esq. atira, dir. mira (ADS).
+    window.addEventListener('mousedown', (e) => {
+      if (!this.pointerLocked) return;
+      if (e.button === 0) this.firing = true;
+      if (e.button === 2) this.aiming = true;
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this.firing = false;
+      if (e.button === 2) this.aiming = false;
+    });
+    document.addEventListener('contextmenu', (e) => {
+      if (this.pointerLocked) e.preventDefault();
+    });
   }
 
   _bindButtons() {
+    // PULAR (borda) — Fase 1, mantido.
     const jumpBtn = document.getElementById('btn-jump');
-    const sprintBtn = document.getElementById('btn-sprint');
     if (jumpBtn) {
       jumpBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
@@ -78,6 +117,8 @@ export class InputManager {
       }, { passive: false });
       jumpBtn.addEventListener('mousedown', () => { this.jumpQueued = true; });
     }
+    // CORRER (alterna) — Fase 1, mantido.
+    const sprintBtn = document.getElementById('btn-sprint');
     if (sprintBtn) {
       const toggle = (e) => {
         e.preventDefault();
@@ -87,6 +128,40 @@ export class InputManager {
       sprintBtn.addEventListener('touchstart', toggle, { passive: false });
       sprintBtn.addEventListener('mousedown', toggle);
     }
+    // ATIRAR / MIRAR (segurar) e AGACHAR (alterna) — Fase 2.
+    this._bindHoldButton(document.getElementById('btn-fire'), (v) => { this.firing = v; });
+    this._bindHoldButton(document.getElementById('btn-aim'), (v) => { this.aiming = v; });
+    const crouchBtn = document.getElementById('btn-crouch');
+    if (crouchBtn) {
+      const toggle = (e) => {
+        e.preventDefault();
+        this.crouchToggle = !this.crouchToggle;
+        crouchBtn.classList.toggle('active', this.crouchToggle);
+      };
+      crouchBtn.addEventListener('touchstart', toggle, { passive: false });
+      crouchBtn.addEventListener('mousedown', toggle);
+    }
+  }
+
+  /** Botão de segurar: touch + mouse, com classe .active enquanto pressionado. */
+  _bindHoldButton(el, set) {
+    if (!el) return;
+    const on = (e) => {
+      e.preventDefault();
+      set(true);
+      el.classList.add('active');
+    };
+    const off = (e) => {
+      e.preventDefault();
+      set(false);
+      el.classList.remove('active');
+    };
+    el.addEventListener('touchstart', on, { passive: false });
+    el.addEventListener('touchend', off, { passive: false });
+    el.addEventListener('touchcancel', off, { passive: false });
+    el.addEventListener('mousedown', on);
+    el.addEventListener('mouseup', off);
+    el.addEventListener('mouseleave', off);
   }
 
   /**
@@ -114,12 +189,18 @@ export class InputManager {
     return { x, y };
   }
 
-  /** Deltas de olhar acumulados (mouse + touch), zerados após leitura. */
+  /**
+   * Deltas de olhar em RADIANOS (já com sensibilidade aplicada).
+   * Mouse e toque têm sensibilidades próprias (Config × Settings).
+   * O Player aplica a redução de ADS por cima.
+   */
   consumeLookDelta() {
     const touch = this.touchLook ? this.touchLook.consumeDelta() : { x: 0, y: 0 };
     const d = {
-      x: this.mouseDelta.x + touch.x,
-      y: this.mouseDelta.y + touch.y,
+      x: this.mouseDelta.x * Config.MOUSE_SENSITIVITY * this.sensMouse
+        + touch.x * Config.TOUCH_SENSITIVITY * this.sensTouch,
+      y: this.mouseDelta.y * Config.MOUSE_SENSITIVITY * this.sensMouse
+        + touch.y * Config.TOUCH_SENSITIVITY * this.sensTouch,
     };
     this.mouseDelta.x = 0;
     this.mouseDelta.y = 0;
@@ -137,8 +218,18 @@ export class InputManager {
     return this.sprintHeld || this.sprintToggle;
   }
 
-  /** Sensibilidade conforme a fonte do delta (mouse vs. touch). */
-  getSensitivity() {
-    return Config.MOUSE_SENSITIVITY;
+  /** true enquanto o botão ATIRAR / botão esquerdo estiver pressionado. */
+  isFiring() {
+    return this.firing;
+  }
+
+  /** true enquanto o botão MIRAR / botão direito estiver pressionado (ADS). */
+  isAiming() {
+    return this.aiming;
+  }
+
+  /** true enquanto agachado (botão AGACHAR / tecla C alternam). */
+  isCrouching() {
+    return this.crouchToggle;
   }
 }

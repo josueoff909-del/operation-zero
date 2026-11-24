@@ -11,11 +11,12 @@ export class HUD {
     this.trisEl = document.getElementById('stat-tris');
     this.qualityEl = document.getElementById('stat-quality');
     this.posEl = document.getElementById('stat-pos');
+    this.stateEl = document.getElementById('stat-state');
     this._accum = 0;
   }
 
   /** Chamado todo frame; só escreve no DOM a cada ~0.1s. */
-  update(dt, perfStats, renderStats, playerPos) {
+  update(dt, perfStats, renderStats, playerPos, playerState) {
     this._accum += dt;
     if (this._accum < 0.1) return;
     this._accum = 0;

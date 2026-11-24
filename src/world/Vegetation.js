@@ -84,9 +84,10 @@ export class Vegetation {
     // Para isso, geramos posições uma vez e aplicamos nos dois meshes.
     const positions = [];
     for (let i = 0; i < Config.TREE_COUNT; i++) {
+      const { x, z } = randPos();
       positions.push({
-        x: (rand() * 2 - 1) * half,
-        z: (rand() * 2 - 1) * half,
+        x,
+        z,
         rot: rand() * Math.PI * 2,
         scale: 0.8 + rand() * 0.9,
         squash: 0.9 + rand() * 0.3,

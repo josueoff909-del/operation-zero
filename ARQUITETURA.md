@@ -35,26 +35,29 @@ operation-zero/
 │   │   ├── Terrain.js          # heightmap + cores por vértice + getHeightAt
 │   │   ├── Lighting.js         # sol + sombra 1024 + hemisfério + céu + fog
 │   │   ├── Vegetation.js       # InstancedMesh (árvores/pedras/arbustos)
-│   │   ├── Zones.js            # STUB Fase 2 (POIs, biomas, coberturas)
-│   │   └── Climate.js          # STUB Fase 2 (dia/noite, clima)
+│   │   ├── Buildings.js        # cidade explorável (Fase 2: prédios/ruas/coberturas)
+│   │   ├── Zones.js            # STUB (POIs, biomas — fases futuras)
+│   │   └── Climate.js          # STUB (dia/noite, clima — fases futuras)
 │   ├── entities/               # coisas que se movem
 │   │   ├── Player.js           # controlador FPS (Fase 3 → 3ª pessoa)
+│   │   ├── Viewmodel.js        # arma + mãos em 1ª pessoa (Fase 2: ADS/tiro visual)
 │   │   ├── Bot.js              # STUB Fase 9 (44 bots FSM escalonados)
 │   │   ├── Vehicle.js          # STUB Fase 7 (carro/moto/jipe)
 │   │   └── Aircraft.js         # STUB Fase 8 (avião + paraquedas)
 │   ├── systems/                # regras do jogo
+│   │   ├── Collision.js        # colisão AABB + piso de caixas (Fase 2)
 │   │   ├── Combat.js           # STUB Fase 4 (armas, balística, hitboxes)
 │   │   ├── Inventory.js        # STUB Fase 5 (loot, cura, habilidades)
 │   │   ├── SafeZone.js         # STUB Fase 6 (zona segura/gás)
 │   │   ├── GameState.js        # STUB Fase 8 (fluxo da partida)
 │   │   └── SaveSystem.js       # STUB Fase 11 (persistência local)
 │   ├── ui/                     # interface
-│   │   ├── HUD.js              # overlay de performance (Fase 1)
+│   │   ├── HUD.js              # overlay de performance + estado (Fases 1–2)
 │   │   ├── Joystick.js         # joystick virtual flutuante (esquerda)
 │   │   ├── TouchLook.js        # olhar por toque (direita)
+│   │   ├── Settings.js         # sensibilidade ajustável (Fase 2)
 │   │   ├── Minimap.js          # STUB Fase 11
-│   │   ├── Lobby.js            # STUB Fases 8/11
-│   │   └── Settings.js         # STUB Fase 11
+│   │   └── Lobby.js            # STUB Fases 8/11
 │   └── utils/
 │       └── Noise.js            # ruído determinístico (heightmap)
 └── .agents/skills/threejs-android/SKILL.md  # regras obrigatórias
@@ -106,7 +109,8 @@ Android: joystick esquerdo + arrastar direita + botões PULAR/CORRER.
 ## 6. Como expandir (próximas fases)
 
 Cada fase pluga um módulo novo no `Engine` sem reescrever o núcleo:
-Fase 4 → `Combat` (raycast + pooling); Fase 5 → `Inventory` (loot);
-Fase 6 → `SafeZone` (círculos + dano); Fase 9 → `Bot` (FSM escalonada);
-Fase 10 → rede (autoridade do servidor); Fase 11 → HUD completa.
-Detalhes e status em `PROGRESSO.md`.
+Fase 3 → câmera 3ª pessoa no `Player` (reaproveita movimento/colisão);
+Fase 4 → `Combat` (raycast + pooling, dano real no lugar do tiro visual);
+Fase 5 → `Inventory` (loot); Fase 6 → `SafeZone` (círculos + dano);
+Fase 9 → `Bot` (FSM escalonada); Fase 10 → rede (autoridade do servidor);
+Fase 11 → HUD completa. Detalhes e status em `PROGRESSO.md`.

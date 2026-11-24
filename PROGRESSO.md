@@ -4,15 +4,15 @@
 > Base: `GDD_MASTER.md` (Seção 22 — Primeira Ação) + skill
 > `.agents/skills/threejs-android/SKILL.md`.
 
-**Status geral:** 🟡 Fase 1 em andamento (arquitetura + protótipo 3D).
-**Última atualização:** 2026-11-24 (Fase 1).
+**Status geral:** ✅ Fases 1–2 concluídas (protótipo FPS + cidade explorável).
+**Última atualização:** 2026-11-24 (Fase 2).
 
 ## Mapa das 14 fases
 
 | # | Fase | Escopo (GDD) | Status |
 |---|------|--------------|--------|
-| 1 | Arquitetura técnica + protótipo 3D funcional | Iluminação, terreno base, controle FPS, monitor de performance/FPS | 🟡 Em andamento |
-| 2 | Mapa completo: POIs, biomas e coberturas | Regiões nomeadas, densidade de loot, prédios/muros, clima | ⚪ Não iniciada |
+| 1 | Arquitetura técnica + protótipo 3D funcional | Iluminação, terreno base, controle FPS, monitor de performance/FPS | ✅ Concluída |
+| 2 | FPS completo + cidade explorável | Paisagem, viewmodel (respiração/caminhada/corrida/ADS), touch completo (atirar/mirar/pular/correr/agachar + sensibilidade), prédios com interiores e colisão sólida | ✅ Concluída |
 | 3 | Jogador em 3ª pessoa + física | Over-the-shoulder, colisão de câmera, agachar/deitar, pulo, escalada | ⚪ Não iniciada |
 | 4 | Combate, armas e balística | AR/SMG/SG/SR/pistola, falloff, recuo, spread, hitboxes, hitmarkers | ⚪ Não iniciada |
 | 5 | Inventário, loot, cura e habilidades | Loot/airdrops, munição, coletes, cura com canalização, habilidades | ⚪ Não iniciada |
@@ -40,7 +40,18 @@ Legenda: ✅ Concluída · 🟡 Em andamento · ⚪ Não iniciada
 - [x] `src/ui/` — HUD de performance, Joystick flutuante, Touch Look (multitouch)
 - [x] Stubs das Fases 2–14 (interfaces reservadas, sem implementação)
 - [x] Protótipo rodando no navegador (build OK + servidor dev testado)
-- [x] Commit na branch
+- [x] Commit na branch + PR #1 mergeado na `main`
+
+## Fase 2 — Checklist
+
+- [x] Interface paisagem: HUD compacto, dica "vire o celular" (só touch/retrato), mensagens de mouse ocultas no mobile
+- [x] Câmera FPS completa + viewmodel (arma + luvas): respiração, bob de caminhada/corrida, inclinação ao correr, sway do olhar, ADS (FOV 75→50)
+- [x] Touch simultâneo: joystick esquerdo + olhar direito + ATIRAR/MIRAR (segurar) + PULAR/CORRER/AGACHAR (alterna/borda)
+- [x] Sensibilidade ajustável (mouse/toque 0.5×–2.0×, painel ⚙, persistida em localStorage)
+- [x] Cidade explorável: 6 prédios com portas/janelas/divisória/telhado, ruas em cruz, crates/mesas/muros baixos
+- [x] Colisão sólida (AABB): paredes não atravessáveis, desliza nas paredes, dá p/ pular/subir em crates de 1m
+- [x] `npm run build` validado (zero erros, 24 módulos)
+- [x] Commit na branch + PR para a `main`
 
 ## Decisões técnicas da Fase 1
 
@@ -51,19 +62,29 @@ Legenda: ✅ Concluída · 🟡 Em andamento · ⚪ Não iniciada
 - **FPS em 1ª pessoa no protótipo:** a Fase 3 converte p/ 3ª pessoa reaproveitando o núcleo de movimento.
 - **Sem rede/multiplayer na Fase 1** (Fase 10). Sem armas/loot/zona/bots (Fases 4–9).
 
-## Como testar a Fase 1
+## Decisões técnicas da Fase 2
+
+- **Tiro visual, sem dano:** flash + tracer + coice (dano/balística real é da Fase 4).
+- **Colisão AABB alinhada aos eixos** (`Collision.js`): prédios sem rotação p/ colisão rápida; movimento por eixos separados (desliza nas paredes).
+- **Cidade achata o terreno** (raio 35, mistura até 65) e a vegetação não nasce dentro do raio 60 — spawn continua na rua em cruz.
+- **Instancing na cidade:** paredes/telhados/pisos/crates/muros em 5 `InstancedMesh` (Skill §1). LOD fica p/ a Fase 13.
+- **Sensibilidade em radianos** no InputManager (mouse/toque separados × multiplicador do Settings); ADS reduz ×0.6 no Player.
+- **Paisagem:** layout de botões pensado p/ celular deitado; retrato no touch mostra apenas a dica de virar (jogo segue jogável).
+
+## Como testar a Fase 2
 
 ```bash
 npm install
 npm run dev   # http://localhost:5173
 ```
 
-Desktop: WASD + mouse (clique p/ travar) + Shift + Espaço.
-Android: joystick esquerdo + arrastar direita + botões PULAR/CORRER.
-HUD mostra FPS, ms/frame, draw calls, triângulos, qualidade e posição.
+Desktop: WASD + mouse (clique p/ travar) + botão esq. atirar + botão dir. mirar (ADS) + Shift correr + C agachar + Espaço pular.
+Android (paisagem): joystick esquerdo + arrastar direita + ATIRAR/MIRAR (segurar) + PULAR/CORRER/AGACHAR. ⚙ ajusta a sensibilidade.
+Explore a cidade: entre nos prédios pelas portas, suba nos crates, use os muros baixos como cobertura.
+HUD mostra FPS, ms/frame, draw calls, triângulos, qualidade, posição e estado (EM PÉ/CORRENDO/MIRANDO/AGACHADO).
 
-## Próximos passos (Fase 2 — NÃO iniciar sem concluir a Fase 1)
+## Próximos passos (Fase 3 — NÃO iniciar sem concluir a Fase 2)
 
 1. Validar FPS em dispositivo Android real (orçamento: 60 FPS estáveis).
-2. Expandir mapa: POIs nomeados, prédios modulares (InstancedMesh), coberturas.
-3. Clima básico (nuvens/neblina) com custo mobile controlado.
+2. Converter o controlador p/ 3ª pessoa over-the-shoulder (reaproveitar núcleo de movimento/colisão).
+3. Colisão de câmera contra paredes/terreno.

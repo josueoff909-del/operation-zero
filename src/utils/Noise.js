@@ -45,9 +45,16 @@ export function fbm(x, y, octaves = 4, seed = 1337) {
   return sum / norm; // 0..1
 }
 
+function smoothstep(edge0, edge1, x) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
 /**
  * Altura do terreno em (x, z). Colinas suaves (amplitude ~7u) com
  * uma planície central p/ spawn. Pura e determinística.
+ * Fase 2: a área da cidade (prédios/ruas) é achatada até o raio 35
+ * e mistura com o relevo natural até o raio 65 (ver Config.TOWN_*).
  */
 export function terrainHeight(x, z) {
   const n = fbm(x * 0.012 + 10, z * 0.012 + 10, 4, 1337);
@@ -57,5 +64,7 @@ export function terrainHeight(x, z) {
   const distCenter = Math.hypot(x, z);
   const flat = Math.max(0, Math.min(1, (distCenter - 18) / 30));
   h *= flat;
+  // Fase 2: planície da cidade (base y = 0 dentro do raio 35).
+  h *= smoothstep(35, 65, distCenter);
   return h;
 }
