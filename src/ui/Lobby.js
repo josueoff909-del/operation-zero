@@ -231,6 +231,19 @@ export class Lobby {
     }
   }
 
+  /**
+   * Libera os listeners globais (keydown/touchstart). Instanciar um segundo
+   * Lobby — teste, preview, reinstalação do fluxo — sem destruir o anterior
+   * faria DOIS handlers de Enter chamarem `startMatch()` no mesmo GameState.
+   */
+  destroy() {
+    if (this._onKey) window.removeEventListener('keydown', this._onKey);
+    if (this._onFirstTouch) window.removeEventListener('touchstart', this._onFirstTouch);
+    this._onKey = null;
+    this._onFirstTouch = null;
+    this.visible = false;
+  }
+
   show() {
     this.visible = true;
     if (this.root) this.root.classList.add('show');

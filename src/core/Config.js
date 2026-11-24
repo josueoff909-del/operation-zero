@@ -200,9 +200,12 @@ export const Config = Object.freeze({
   NAV_STUCK_PROGRESS: 0.5,
 
   // --- Lobby / fluxo de partida (Fase 8 antecipada no essencial) ---
-  LOBBY_ORBIT_RADIUS: 58,
-  LOBBY_ORBIT_HEIGHT: 24,
-  LOBBY_ORBIT_SPEED: 0.09, // rad/s
+  // O Lobby é a VITRINE do mapa: órbita alta e larga o bastante p/ caber
+  // cidade + lago + montanhas no quadro (58 m de raio só mostrava prédios).
+  LOBBY_ORBIT_RADIUS: 132,
+  LOBBY_ORBIT_HEIGHT: 66,
+  LOBBY_ORBIT_SPEED: 0.055, // rad/s
+  LOBBY_ORBIT_FOV: 58,
   LOBBY_BOT_PRESETS: [0, 12, 24, 44],
 
   // --- Tela cheia / orientação ---

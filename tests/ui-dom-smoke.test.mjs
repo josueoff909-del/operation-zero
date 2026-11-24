@@ -836,6 +836,7 @@ await check('Lobby pinta o preview da arena (drawBaseMap) sem depender do Engine
   assert.ok(ctx.log.arcs.length >= 6, 'preview sem POIs/lago');
   // preview é 1 paint: nada de agendar loop
   assert.equal(lobby._mapRaf, undefined, 'Lobby agendou loop de redraw no preview');
+  lobby.destroy(); // solta os listeners de window: 2 Lobys = 2 Enter por tecla
   void Minimap;
 });
 

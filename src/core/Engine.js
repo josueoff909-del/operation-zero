@@ -176,7 +176,8 @@ export class Engine {
     this.minimap = new Minimap(document.getElementById('minimap-canvas'));
 
     this.sceneManager.setScene(scene, camera);
-    this._lobbyCamTarget = new THREE.Vector3(0, 2, 0);
+    // puxado para o lago: o quadro pega cidade + água + antenas juntos
+    this._lobbyCamTarget = new THREE.Vector3(Config.LAKE.x * 0.16, 3, Config.LAKE.z * 0.16);
     this.setPhaseClass(PHASE.LOBBY);
   }
 
@@ -458,10 +459,10 @@ export class Engine {
     const a = this._lobbyAngle;
     const y = Config.LOBBY_ORBIT_HEIGHT + Math.sin(a * 0.7) * 2.5;
     camera.position.set(Math.cos(a) * r, Math.max(this.terrain.getHeightAt(Math.cos(a) * r, Math.sin(a) * r) + 8, y), Math.sin(a) * r);
-    camera.fov = 62;
+    camera.fov = Config.LOBBY_ORBIT_FOV ?? 58;
     camera.updateProjectionMatrix();
     camera.rotation.order = 'YXZ';
-    camera.lookAt(this._lobbyCamTarget);
+    camera.lookAt(this._lobbyCamTarget); // alvo levemente deslocado p/ o lago
     // luz ainda acompanha o "centro" p/ a cidade não ficar sem sombra no menu
     this.lighting.follow(0, 0, 0);
     if (this.viewmodel) this.viewmodel.idle(dt);
